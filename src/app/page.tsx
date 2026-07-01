@@ -5,7 +5,7 @@
 // all in the USER'S language (Strong / Watch / Not a fit), no internal jargon. Every figure
 // comes straight from the DB as a Server Component, so the page always reflects real state.
 import Link from "next/link";
-import { db } from "@/lib/db/connection";
+import { all, get } from "@/lib/db/connection";
 import { indexTotal } from "@/lib/index/queries";
 import { seedIndexIfEmpty } from "@/lib/index/seed";
 import ScoreBadge from "@/components/ScoreBadge";
@@ -26,40 +26,40 @@ const LATEST = `
   FROM event_log WHERE event_type = 'score_computed'
 `;
 
-export default function Dashboard() {
-  seedIndexIfEmpty();
-  const catalogue = indexTotal();
-  const assets = (db.prepare("SELECT COUNT(*) n FROM asset").get() as { n: number }).n;
-  const analyzed = (db
-    .prepare("SELECT COUNT(DISTINCT asset_id) n FROM event_log WHERE event_type='score_computed'")
-    .get() as { n: number }).n;
+export default async function Dashboard() {
+  await seedIndexIfEmpty();
+  const catalogue = await indexTotal();
+  const assets = Number((await get<{ n: number }>("SELECT COUNT(*) n FROM asset"))?.n ?? 0);
+  const analyzed = Number(
+    (await get<{ n: number }>("SELECT COUNT(DISTINCT asset_id) n FROM event_log WHERE event_type='score_computed'"))?.n ?? 0
+  );
 
-  const bandRows = db
-    .prepare(`SELECT json_extract(payload,'$.band') AS band, COUNT(*) AS count
-              FROM (${LATEST}) WHERE rn = 1 GROUP BY band`)
-    .all() as BandRow[];
+  const bandRows = await all<BandRow>(
+    `SELECT json_extract(payload,'$.band') AS band, COUNT(*) AS count
+     FROM (${LATEST}) WHERE rn = 1 GROUP BY band`
+  );
   const band: Record<string, number> = { ROUTE: 0, WATCH: 0, PASS: 0 };
-  for (const r of bandRows) if (r.band in band) band[r.band] = r.count;
+  for (const r of bandRows) if (r.band in band) band[r.band] = Number(r.count);
   const totalScored = band.ROUTE + band.WATCH + band.PASS;
 
-  const gate = db
-    .prepare(`SELECT
+  const gate = await get<GateRow>(
+    `SELECT
        SUM(CASE WHEN json_extract(payload,'$.passedGate')=1 THEN 1 ELSE 0 END) AS passedGate,
        SUM(CASE WHEN json_extract(payload,'$.passedGate')=0 THEN 1 ELSE 0 END) AS failedGate
-       FROM (${LATEST}) WHERE rn = 1`)
-    .get() as GateRow | undefined;
-  const passedGate = gate?.passedGate ?? 0;
-  const failedGate = gate?.failedGate ?? 0;
+       FROM (${LATEST}) WHERE rn = 1`
+  );
+  const passedGate = Number(gate?.passedGate ?? 0);
+  const failedGate = Number(gate?.failedGate ?? 0);
 
-  const recent = db
-    .prepare(`SELECT l.asset_id, a.external_id,
+  const recent = await all<RecentRow>(
+    `SELECT l.asset_id, a.external_id,
                 json_extract(l.payload,'$.band')      AS band,
                 json_extract(l.payload,'$.dormancy')  AS dormancy,
                 json_extract(l.payload,'$.composite') AS composite,
                 l.created_at                          AS scored_at
               FROM (${LATEST}) l JOIN asset a ON a.id = l.asset_id
-              WHERE l.rn = 1 ORDER BY l.created_at DESC LIMIT 8`)
-    .all() as RecentRow[];
+              WHERE l.rn = 1 ORDER BY l.created_at DESC LIMIT 8`
+  );
 
   const pct = (n: number) => (totalScored ? Math.round((n / totalScored) * 100) : 0);
   const strongShare = pct(band.ROUTE);

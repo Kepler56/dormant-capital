@@ -2,11 +2,11 @@
 // Why: mirrors the canonical Python model (asset / fact / judgment / event_log).
 // The fact/judgment split IS the auditability guarantee — facts are sourced and
 // immutable, judgments are versioned AI hypotheses. Created idempotently so the app
-// boots against a fresh machine with no migration step.
-import type { Database } from "better-sqlite3";
+// boots against a fresh database (local file, :memory:, or Turso) with no migration step.
+import type { Client } from "@libsql/client";
 
-export function ensureSchema(db: Database): void {
-  db.exec(`
+export async function ensureSchema(db: Client): Promise<void> {
+  await db.executeMultiple(`
     CREATE TABLE IF NOT EXISTS asset (
       id INTEGER PRIMARY KEY,
       asset_type TEXT NOT NULL DEFAULT 'patent',

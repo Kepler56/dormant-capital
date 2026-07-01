@@ -12,6 +12,9 @@ import { redactSecret } from "@/lib/llm/redact";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// The agent streams for tens of seconds (multiple LLM calls + web searches). Ask Vercel for
+// the longer ceiling; Hobby still caps at 60s, Pro honours up to 300s.
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as { assetId?: number; num?: string; llmConfig?: unknown };

@@ -19,8 +19,8 @@ export type AnalyzeResult = { result: ScoreResult; shadow: ShadowScore | null; d
 
 // Rebuild a ParsedPatent from stored facts (a fact key/value map). Facts are read-only here;
 // this module never writes the fact table.
-function factsToParsed(assetId: number, num: string): ParsedPatent {
-  const m = new Map(getFacts(assetId).map((f) => [f.key, f.value]));
+async function factsToParsed(assetId: number, num: string): Promise<ParsedPatent> {
+  const m = new Map((await getFacts(assetId)).map((f) => [f.key, f.value]));
   const g = <T>(k: string, d: T): T => (m.has(k) ? (m.get(k) as T) : d);
   return {
     patentNumber: num, title: g("title", null), abstract: g("abstract", null),
@@ -36,7 +36,7 @@ function factsToParsed(assetId: number, num: string): ParsedPatent {
 export async function* runAnalysis(
   assetId: number, num: string, cfg?: LLMConfig | null, deps?: AgentDeps
 ): AsyncGenerator<TraceEvent, AnalyzeResult, void> {
-  const patent = factsToParsed(assetId, num);
+  const patent = await factsToParsed(assetId, num);
   const gen = runGraph({ assetId, num, patent }, deps ?? defaultDeps(cfg));
 
   let r = await gen.next();
@@ -49,32 +49,32 @@ export async function* runAnalysis(
   const divergence = s.divergence ?? null;
 
   // Persist judgments. Dormancy always; opp/exec only when the gate passed; shadow when present.
-  insertJudgment(assetId, {
+  await insertJudgment(assetId, {
     dimension: "dormancy", subDimension: "residual", score: result.dormancy,
     confidence: s.dormancy?.product_exists.confidence ?? null, rationale: result.reasons.join(" "),
     flags: s.dormancy, sources: s.sources.map((x) => ({ source: "web", title: x.title, url: x.url })),
     modelVersion: s.dormancyModel || "unknown", promptVersion: DORM_V,
   });
   if (result.passedGate && s.oppExec) {
-    insertJudgment(assetId, { dimension: "opportunity", subDimension: "composite", score: result.opportunity,
+    await insertJudgment(assetId, { dimension: "opportunity", subDimension: "composite", score: result.opportunity,
       confidence: s.oppExec.commercial_relevance.confidence, rationale: "Opportunity evidence extracted.",
       flags: s.oppExec, sources: [{ source: "llm:" + s.oppExecModel }], modelVersion: s.oppExecModel || "unknown", promptVersion: OE_V });
-    insertJudgment(assetId, { dimension: "execution", subDimension: "composite", score: result.execution,
+    await insertJudgment(assetId, { dimension: "execution", subDimension: "composite", score: result.execution,
       confidence: s.oppExec.ownership_clarity.confidence, rationale: "Execution evidence extracted.",
       flags: s.oppExec, sources: [{ source: "llm:" + s.oppExecModel }], modelVersion: s.oppExecModel || "unknown", promptVersion: OE_V });
   }
   if (shadow) {
-    insertJudgment(assetId, { dimension: "shadow", subDimension: "llm", score: shadow.composite,
+    await insertJudgment(assetId, { dimension: "shadow", subDimension: "llm", score: shadow.composite,
       confidence: null, rationale: shadow.rationale, flags: { verdict: shadow.verdict, divergence },
       sources: [{ source: "llm:" + s.shadowModel }], modelVersion: s.shadowModel || "unknown", promptVersion: SHADOW_VERSION });
   }
 
-  appendEvent("score_computed", assetId, { ...result, trace, shadow, divergence });
+  await appendEvent("score_computed", assetId, { ...result, trace, shadow, divergence });
   return { result, shadow, divergence };
 }
 
-export function getLatestTrace(assetId: number): TraceEvent[] | null {
-  const last = [...getEvents(assetId)].reverse().find((e) => e.event_type === "score_computed");
+export async function getLatestTrace(assetId: number): Promise<TraceEvent[] | null> {
+  const last = [...(await getEvents(assetId))].reverse().find((e) => e.event_type === "score_computed");
   const payload = last?.payload as { trace?: TraceEvent[] } | undefined;
   return payload?.trace ?? null;
 }

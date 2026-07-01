@@ -8,7 +8,7 @@
 import * as cheerio from "cheerio";
 import { patentUrl } from "./fetch";
 import { updateIndexMeta } from "@/lib/index/queries";
-import { db } from "@/lib/db/connection";
+import { get } from "@/lib/db/connection";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
 
@@ -16,8 +16,9 @@ export type EnrichResult = { number: string; ok: boolean; title?: string | null;
 
 export async function enrichPatent(number: string): Promise<EnrichResult> {
   // Short-circuit: rows already enriched by the bulk loader never need a network round-trip.
-  const existing = db.prepare("SELECT title, assignee, enriched FROM patent_index WHERE number=?").get(number) as
-    { title: string | null; assignee: string | null; enriched: number } | undefined;
+  const existing = await get<{ title: string | null; assignee: string | null; enriched: number }>(
+    "SELECT title, assignee, enriched FROM patent_index WHERE number=?", [number]
+  );
   if (existing?.enriched) return { number, ok: true, title: existing.title, assignee: existing.assignee };
 
   let title: string | null = null;
@@ -39,7 +40,7 @@ export async function enrichPatent(number: string): Promise<EnrichResult> {
   }
   // DB write is outside the fetch try/catch so a write failure doesn't silently turn a
   // successful scrape into ok:false — the caller still gets ok:true and the error is thrown.
-  updateIndexMeta(number, title, assignee);
+  await updateIndexMeta(number, title, assignee);
   return { number, ok: true, title, assignee };
 }
 

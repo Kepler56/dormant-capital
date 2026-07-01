@@ -86,12 +86,39 @@ stale-but-real (fee 2025-03; bibliographic 2026-01) — fine for the testing pha
 
 Paste it into **Settings → Bring your own model** — never into a file.
 
-## Deploy
-No secrets to configure. The one requirement is a host with a **persistent
-filesystem** (Docker container, VM, Railway, Fly.io, etc.), because state lives in a
-local SQLite file under `web/data/` seeded on first boot — classic serverless
-functions with an ephemeral/read-only FS are not a fit. Analyze streams over SSE and
-can run for tens of seconds, so allow a generous request timeout.
+## Data layer
+
+State lives in **libSQL** (SQLite-compatible). The *same* code runs everywhere:
+- **local dev / tests** → a local `file:data/dormant.db` (or `:memory:` under Vitest)
+- **production** → a hosted **Turso** database, set via `TURSO_DATABASE_URL` +
+  `TURSO_AUTH_TOKEN`
+
+No filesystem persistence is required in production, so it deploys to serverless
+(Vercel) as well as any long-running host.
+
+## Deploy to Vercel (with Turso)
+
+1. **Create the Turso DB from your local catalogue** (you already have `data/dormant.db`
+   after `npm run load:uspto`):
+   ```
+   # one-time: install the CLI, then
+   turso db create dormant-capital --from-file ./data/dormant.db
+   turso db show dormant-capital --url          # → TURSO_DATABASE_URL
+   turso db tokens create dormant-capital       # → TURSO_AUTH_TOKEN
+   ```
+   (Alternatively, point the loader straight at Turso:
+   `TURSO_DATABASE_URL=… TURSO_AUTH_TOKEN=… npm run load:uspto`.)
+2. **Import the GitHub repo** into Vercel (Framework preset: Next.js — build/install
+   are auto-detected).
+3. **Add two Environment Variables** in the Vercel project: `TURSO_DATABASE_URL` and
+   `TURSO_AUTH_TOKEN`. (No LLM keys — those stay bring-your-own, entered in the UI.)
+4. **Deploy.** `/api/analyze` declares `maxDuration = 300`; the long streaming run needs
+   a Vercel **Pro** plan to use the full 300s (Hobby caps at 60s).
+5. Open the site → **Settings → Bring your own model** → paste a key → analyze.
+
+> Prefer a single long-running host instead? It also runs as-is on Railway / Render /
+> Fly.io — point `TURSO_DATABASE_URL` at Turso, or drop it and mount a volume so the
+> default `file:data/dormant.db` persists.
 
 ## Test
 `npm run test` (db, scraper parser, scoring incl. VRFB regression, multi-provider web

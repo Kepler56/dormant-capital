@@ -2,7 +2,8 @@
 // Why: the data access for the local patent catalogue that backs the Patents table. All
 // filtering/pagination happens in SQLite against the bundled index, so browsing is
 // instant and never touches the network — the fix for the Google Patents 503s.
-import { db } from "@/lib/db/connection";
+import { all, get, run } from "@/lib/db/connection";
+import type { InArgs } from "@libsql/client";
 
 export type IndexRow = {
   number: string;
@@ -31,7 +32,7 @@ const DORMANT_EXISTS =
 
 // Build the shared WHERE clause + bound params from the filters (kept in one place so the
 // count query and the page query can never drift apart).
-function where(f: IndexFilters): { sql: string; params: unknown[] } {
+function where(f: IndexFilters): { sql: string; params: InArgs } {
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (f.q) {
@@ -44,32 +45,36 @@ function where(f: IndexFilters): { sql: string; params: unknown[] } {
   if (f.yearAfter) { clauses.push("grant_year >= ?"); params.push(f.yearAfter); }
   if (f.yearBefore) { clauses.push("grant_year <= ?"); params.push(f.yearBefore); }
   if (f.dormantOnly) { clauses.push(DORMANT_EXISTS); }
-  return { sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params };
+  return { sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params: params as InArgs };
 }
 
-export function searchLocalIndex(f: IndexFilters): { total: number; rows: IndexRow[] } {
+export async function searchLocalIndex(f: IndexFilters): Promise<{ total: number; rows: IndexRow[] }> {
   const { sql, params } = where(f);
-  const total = (db.prepare(`SELECT COUNT(*) n FROM patent_index ${sql}`).get(...params) as { n: number }).n;
+  const totalRow = await get<{ n: number }>(`SELECT COUNT(*) n FROM patent_index ${sql}`, params);
+  const total = Number(totalRow?.n ?? 0);
   const pageSize = Math.min(f.pageSize ?? 25, 100);
   const offset = Math.max(0, f.page ?? 0) * pageSize;
   // Un-enriched-but-newer patents first is unhelpful; order by number so paging is stable.
-  const rows = db
-    .prepare(`SELECT number, grant_year, title, assignee, enriched FROM patent_index
-              ${sql} ORDER BY number LIMIT ? OFFSET ?`)
-    .all(...params, pageSize, offset) as IndexRow[];
+  const rows = await all<IndexRow>(
+    `SELECT number, grant_year, title, assignee, enriched FROM patent_index
+     ${sql} ORDER BY number LIMIT ? OFFSET ?`,
+    [...(params as unknown[]), pageSize, offset] as InArgs
+  );
   return { total, rows };
 }
 
 // Persist enriched metadata for one patent (called after a successful page scrape).
-export function updateIndexMeta(number: string, title: string | null, assignee: string | null): void {
-  db.prepare(
+export async function updateIndexMeta(number: string, title: string | null, assignee: string | null): Promise<void> {
+  await run(
     `INSERT INTO patent_index (number, title, assignee, enriched, updated_at)
      VALUES (?, ?, ?, 1, datetime('now'))
      ON CONFLICT(number) DO UPDATE SET title=excluded.title, assignee=excluded.assignee,
-       enriched=1, updated_at=excluded.updated_at`
-  ).run(number, title, assignee);
+       enriched=1, updated_at=excluded.updated_at`,
+    [number, title, assignee]
+  );
 }
 
-export function indexTotal(): number {
-  return (db.prepare("SELECT COUNT(*) n FROM patent_index").get() as { n: number }).n;
+export async function indexTotal(): Promise<number> {
+  const row = await get<{ n: number }>("SELECT COUNT(*) n FROM patent_index");
+  return Number(row?.n ?? 0);
 }

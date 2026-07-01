@@ -27,10 +27,10 @@ async function run(id: number, num: string, deps: AgentDeps) {
 
 describe("runAnalysis", () => {
   let id: number;
-  beforeEach(() => {
-    id = upsertAsset("US-TESTLAPSED-" + Math.floor(performance.now()));
-    insertFact(id, { key: "maintenance_lapsed", value: true, source: "test", sourceUrl: "", retrievedAt: "2026-01-01" });
-    insertFact(id, { key: "title", value: "Test", source: "test", sourceUrl: "", retrievedAt: "2026-01-01" });
+  beforeEach(async () => {
+    id = await upsertAsset("US-TESTLAPSED-" + Math.floor(performance.now()));
+    await insertFact(id, { key: "maintenance_lapsed", value: true, source: "test", sourceUrl: "", retrievedAt: "2026-01-01" });
+    await insertFact(id, { key: "title", value: "Test", source: "test", sourceUrl: "", retrievedAt: "2026-01-01" });
   });
 
   it("streams trace events and persists judgments incl. shadow", async () => {
@@ -38,7 +38,7 @@ describe("runAnalysis", () => {
     expect(events.length).toBeGreaterThan(3);
     expect(result.result.passedGate).toBe(true);
     expect(result.shadow?.composite).toBe(70);
-    const dims = getJudgments(id).map((j) => j.dimension);
+    const dims = (await getJudgments(id)).map((j) => j.dimension);
     expect(dims).toContain("dormancy");
     expect(dims).toContain("shadow");
   });

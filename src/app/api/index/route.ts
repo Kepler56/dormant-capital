@@ -6,11 +6,11 @@ import { NextResponse } from "next/server";
 import { seedIndexIfEmpty } from "@/lib/index/seed";
 import { searchLocalIndex } from "@/lib/index/queries";
 
-export function GET(req: Request) {
-  seedIndexIfEmpty();
+export async function GET(req: Request) {
+  await seedIndexIfEmpty();
   const u = new URL(req.url);
   const int = (k: string) => (u.searchParams.get(k) ? parseInt(u.searchParams.get(k)!, 10) : undefined);
-  const { total, rows } = searchLocalIndex({
+  const { total, rows } = await searchLocalIndex({
     q: u.searchParams.get("q") || undefined,
     assignee: u.searchParams.get("assignee") || undefined,
     yearAfter: int("yearAfter"),

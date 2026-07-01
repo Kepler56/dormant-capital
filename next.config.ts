@@ -1,6 +1,7 @@
 // next.config.ts
-// Why: better-sqlite3 is a native Node addon. Bundling it breaks the build, so we
-// declare it external; it is only ever imported from server code (API routes / RSC).
+// Why: @libsql/client pulls in optional native bindings (for local file: databases). Bundling
+// those breaks the build, so we mark it external; it is only ever imported from server code
+// (API routes / RSC). On Vercel the client talks to Turso over HTTP, so no native code loads.
 import type { NextConfig } from "next";
-const config: NextConfig = { serverExternalPackages: ["better-sqlite3"] };
+const config: NextConfig = { serverExternalPackages: ["@libsql/client", "libsql"] };
 export default config;

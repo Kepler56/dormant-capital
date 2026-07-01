@@ -85,7 +85,7 @@ export async function runLoad(): Promise<{ subsetSize: number; loaded: number }>
       entityStatus: evs[evs.length - 1].entityStatus,
       cpc: cpc.get(number) ?? [],
     };
-    materializePatent(bundle, urls, retrievedAt);
+    await materializePatent(bundle, urls, retrievedAt);
     loaded++;
   }
   return { subsetSize: subset.size, loaded };

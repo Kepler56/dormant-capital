@@ -17,24 +17,24 @@ beforeAll(() => {
   process.env.USPTO_PAID_CAP = "100";
 });
 
-const factsOf = (num: string) => {
-  const facts = getFacts(upsertAsset(num));
+const factsOf = async (num: string) => {
+  const facts = await getFacts(await upsertAsset(num));
   return Object.fromEntries(facts.map((f) => [f.key, f.value]));
 };
 
 describe("runLoad integration", () => {
   beforeAll(async () => { await runLoad(); });
 
-  it("loads VRFB, the lapsed, the reinstated, and the control patent", () => {
-    expect(getMaintenanceEvents("US4786567").length).toBeGreaterThan(0);
-    expect(factsOf("US5111111")["maintenance_lapsed"]).toBe(true);   // EXP. only
-    expect(factsOf("US5222222")["maintenance_lapsed"]).toBe(false);  // EXP. then EXPX
-    expect(getMaintenanceEvents("US5333333").length).toBeGreaterThan(0);
-    expect(factsOf("US5333333")["maintenance_lapsed"]).toBe(false);
+  it("loads VRFB, the lapsed, the reinstated, and the control patent", async () => {
+    expect((await getMaintenanceEvents("US4786567")).length).toBeGreaterThan(0);
+    expect((await factsOf("US5111111"))["maintenance_lapsed"]).toBe(true);   // EXP. only
+    expect((await factsOf("US5222222"))["maintenance_lapsed"]).toBe(false);  // EXP. then EXPX
+    expect((await getMaintenanceEvents("US5333333")).length).toBeGreaterThan(0);
+    expect((await factsOf("US5333333"))["maintenance_lapsed"]).toBe(false);
   });
 
-  it("REGRESSION: VRFB US 4,786,567 is NOT dormant and passes the gate (PASS)", () => {
-    const f = factsOf("US4786567");
+  it("REGRESSION: VRFB US 4,786,567 is NOT dormant and passes the gate (PASS)", async () => {
+    const f = await factsOf("US4786567");
     expect(f["maintenance_lapsed"]).toBe(false);
     expect(f["title"]).toMatch(/vanadium/i);
     expect(f["assignee"]).toBe("Unisearch Ltd");

@@ -17,18 +17,18 @@ const EMPTY_PARSED = (num: string): ParsedPatent => ({
 
 // Local-first: if the bulk loader already populated this patent, skip the network entirely.
 // We treat "has any maintenance_event OR any fact" as "loaded locally".
-export function localIngestPatent(num: string): { assetId: number } | null {
-  const assetId = findAssetId(num);
+export async function localIngestPatent(num: string): Promise<{ assetId: number } | null> {
+  const assetId = await findAssetId(num);
   if (assetId == null) return null;            // not loaded locally — no side effects
-  const hasEvents = getMaintenanceEvents(num).length > 0;
-  const hasFacts = getFacts(assetId).length > 0;
+  const hasEvents = (await getMaintenanceEvents(num)).length > 0;
+  const hasFacts = (await getFacts(assetId)).length > 0;
   return hasEvents || hasFacts ? { assetId } : null;
 }
 
 export async function ingestPatent(num: string): Promise<{ assetId: number; parsed: ParsedPatent }> {
-  const local = localIngestPatent(num);
+  const local = await localIngestPatent(num);
   if (local) {
-    const facts = getFacts(local.assetId);
+    const facts = await getFacts(local.assetId);
     const lapsed = facts.find((f) => f.key === "maintenance_lapsed")?.value === true;
     const parsed = { ...EMPTY_PARSED(num), maintenanceLapsed: lapsed } as ParsedPatent;
     return { assetId: local.assetId, parsed };
@@ -36,34 +36,34 @@ export async function ingestPatent(num: string): Promise<{ assetId: number; pars
 
   const { html, url } = await fetchPatentHtml(num);
   const parsed = parsePatent(html, num);
-  const assetId = upsertAsset(num);
+  const assetId = await upsertAsset(num);
   const now = new Date().toISOString();
 
   // Each ParsedPatent field becomes one fact row. We store the value as-is and attach
   // the same source/url/timestamp so the audit trail is uniform across fields.
   let factCount = 0;
-  const write = (key: string, value: unknown) => {
+  const write = async (key: string, value: unknown) => {
     if (value != null && (!Array.isArray(value) || value.length)) {
-      insertFact(assetId, { key, value, source: "google_patents", sourceUrl: url, retrievedAt: now });
+      await insertFact(assetId, { key, value, source: "google_patents", sourceUrl: url, retrievedAt: now });
       factCount++;
     }
   };
 
-  write("title", parsed.title);
-  write("abstract", parsed.abstract);
-  write("assignee", parsed.assignee);
-  write("inventors", parsed.inventors);
-  write("filing_date", parsed.filingDate);
-  write("grant_date", parsed.grantDate);
-  write("priority_date", parsed.priorityDate);
-  write("expiry_date", parsed.expiryDate);
-  write("cpc_classes", parsed.cpcClasses);
-  write("forward_citations", parsed.forwardCitations);
-  write("backward_citations", parsed.backwardCitations);
-  write("legal_events", parsed.legalEvents);
-  write("maintenance_lapsed", parsed.maintenanceLapsed);
-  write("anticipated_expiration", parsed.anticipatedExpiration);
+  await write("title", parsed.title);
+  await write("abstract", parsed.abstract);
+  await write("assignee", parsed.assignee);
+  await write("inventors", parsed.inventors);
+  await write("filing_date", parsed.filingDate);
+  await write("grant_date", parsed.grantDate);
+  await write("priority_date", parsed.priorityDate);
+  await write("expiry_date", parsed.expiryDate);
+  await write("cpc_classes", parsed.cpcClasses);
+  await write("forward_citations", parsed.forwardCitations);
+  await write("backward_citations", parsed.backwardCitations);
+  await write("legal_events", parsed.legalEvents);
+  await write("maintenance_lapsed", parsed.maintenanceLapsed);
+  await write("anticipated_expiration", parsed.anticipatedExpiration);
 
-  appendEvent("ingested", assetId, { patentNumber: num, factCount, source: url });
+  await appendEvent("ingested", assetId, { patentNumber: num, factCount, source: url });
   return { assetId, parsed };
 }

@@ -8,7 +8,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getFacts, getJudgments, getEvents } from "@/lib/db/queries";
-import { db } from "@/lib/db/connection";
+import { get } from "@/lib/db/connection";
 import type { ScoreResult } from "@/lib/scoring/compose";
 import FactTable from "@/components/FactTable";
 import JudgmentList from "@/components/JudgmentList";
@@ -26,14 +26,10 @@ export const dynamic = "force-dynamic";
 
 export default async function PatentDetail({ params }: { params: Promise<{ id: string }> }) {
   const id = Number((await params).id);
-  const asset = db.prepare("SELECT * FROM asset WHERE id=?").get(id) as
-    | { id: number; external_id: string }
-    | undefined;
+  const asset = await get<{ id: number; external_id: string }>("SELECT * FROM asset WHERE id=?", [id]);
   if (!asset) notFound();
 
-  const facts = getFacts(id);
-  const judgments = getJudgments(id);
-  const events = getEvents(id);
+  const [facts, judgments, events] = await Promise.all([getFacts(id), getJudgments(id), getEvents(id)]);
 
   // Why: a single scan for the latest score_computed event — its payload carries the
   // deterministic result, the non-authoritative shadow LLM score + its divergence, and the full
