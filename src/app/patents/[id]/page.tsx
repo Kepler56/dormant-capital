@@ -1,0 +1,174 @@
+// web/src/app/patents/[id]/page.tsx
+// Why: the patent detail page is now USER-FIRST. A buyer sees, in order: who/what this is,
+// a plain-language verdict with score rings (ScoreHero), the evidence the AI found (with
+// sources), and then — only if they want it — a collapsed "Audit & methodology" panel that
+// holds the full scoring math, the formula explainer, the immutable sourced facts and the
+// append-only event log. Nothing is hidden from those who look; it's just not shouted at
+// people who only need the answer. Stays a Server Component (reads the DB directly).
+import { notFound } from "next/navigation";
+import Link from "next/link";
+import { getFacts, getJudgments, getEvents } from "@/lib/db/queries";
+import { db } from "@/lib/db/connection";
+import type { ScoreResult } from "@/lib/scoring/compose";
+import FactTable from "@/components/FactTable";
+import JudgmentList from "@/components/JudgmentList";
+import ScoreBreakdown from "@/components/ScoreBreakdown";
+import ScoringExplainer from "@/components/ScoringExplainer";
+import EventTimeline from "@/components/EventTimeline";
+import AnalyzeButton from "@/components/AnalyzeButton";
+import ScoreBadge from "@/components/ScoreBadge";
+import ScoreHero from "@/components/ScoreHero";
+import { SectionLabel } from "@/components/ui/Card";
+import AgentTrace from "@/components/AgentTrace";
+import type { TraceEvent } from "@/lib/agent/state";
+
+export const dynamic = "force-dynamic";
+
+export default async function PatentDetail({ params }: { params: Promise<{ id: string }> }) {
+  const id = Number((await params).id);
+  const asset = db.prepare("SELECT * FROM asset WHERE id=?").get(id) as
+    | { id: number; external_id: string }
+    | undefined;
+  if (!asset) notFound();
+
+  const facts = getFacts(id);
+  const judgments = getJudgments(id);
+  const events = getEvents(id);
+
+  // Why: a single scan for the latest score_computed event — its payload carries the
+  // deterministic result, the non-authoritative shadow LLM score + its divergence, and the full
+  // agent reasoning trace, all from the exact run that produced lastScore. Deriving all four from
+  // one lookup avoids redundant reverse-scans of the same event list (previously three).
+  const lastEvent = [...events].reverse().find((e) => e.event_type === "score_computed")?.payload as
+    | (ScoreResult & {
+        shadow?: { composite: number; verdict: string; rationale: string } | null;
+        divergence?: { delta: number; agree: boolean } | null;
+        trace?: TraceEvent[];
+      })
+    | undefined;
+  const lastScore = (lastEvent ?? null) as ScoreResult | null;
+  const shadow = lastEvent?.shadow ?? null;
+  const divergence = lastEvent?.divergence ?? null;
+  const trace = lastEvent?.trace ?? null;
+
+  const factMap = Object.fromEntries(
+    facts.map((f) => [f.key, typeof f.value === "string" ? f.value : JSON.stringify(f.value)])
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Back link */}
+      <Link href="/patents" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-soft transition hover:text-ink">
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
+        Back to patents
+      </Link>
+
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-line bg-surface p-6 shadow-soft">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="rounded-lg bg-canvas px-2.5 py-1 font-mono text-sm font-semibold text-ink-soft">{asset.external_id}</span>
+            {lastScore && <ScoreBadge band={lastScore.band} />}
+          </div>
+          {factMap.title && <h1 className="mt-2.5 max-w-3xl font-display text-2xl font-bold leading-tight text-ink">{factMap.title}</h1>}
+          {factMap.assignee && (
+            <p className="mt-1 text-sm text-ink-soft">
+              <span className="text-muted">Last known owner:</span> {factMap.assignee}
+            </p>
+          )}
+          {!lastScore && (
+            <p className="mt-2.5 text-sm text-muted">Not analyzed yet — run an analysis to get a verdict.</p>
+          )}
+        </div>
+        <div className="shrink-0">
+          <AnalyzeButton assetId={id} num={asset.external_id} />
+        </div>
+      </div>
+
+      {/* ── The answer ─────────────────────────────────────────────────────── */}
+      {lastScore ? (
+        <ScoreHero s={lastScore} />
+      ) : (
+        <div className="rounded-3xl border border-dashed border-line bg-surface p-10 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-soft">
+            <svg viewBox="0 0 24 24" className="h-6 w-6 text-brand" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v3m0 12v3m9-9h-3M6 12H3m13.5-6.5-2 2m-7 7-2 2m11 0-2-2m-7-7-2-2" /></svg>
+          </div>
+          <p className="mt-4 font-display text-lg font-bold text-ink">Ready to analyze</p>
+          <p className="mx-auto mt-1 max-w-md text-sm text-ink-soft">
+            We&apos;ll check whether this patent is dormant, how valuable the technology is, and how cleanly a buyer could acquire it — then give you a clear verdict and the evidence behind it.
+          </p>
+        </div>
+      )}
+
+      {/* ── Evidence the AI found ──────────────────────────────────────────── */}
+      {judgments.length > 0 && (
+        <section>
+          <SectionLabel>What we found</SectionLabel>
+          <JudgmentList judgments={judgments} />
+        </section>
+      )}
+
+      {/* ── Engine vs. autonomous analyst — non-authoritative shadow comparison ── */}
+      {shadow && lastScore?.composite != null && (
+        <section className="rounded-2xl border border-line bg-surface p-6 shadow-soft">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-bold text-ink">Engine vs. autonomous analyst</span>
+            <span className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${divergence?.agree ? "bg-good-soft text-brand-dark" : "bg-watch-soft text-amber-700"}`}>
+              {divergence?.agree ? "Agree" : `Differ by ${divergence?.delta}`}
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-4">
+            <div className="rounded-xl bg-canvas p-4">
+              <p className="text-xs font-medium text-muted">Deterministic engine (authoritative)</p>
+              <p className="mt-1 font-display text-2xl font-bold text-ink">{lastScore.composite}</p>
+            </div>
+            <div className="rounded-xl bg-canvas p-4">
+              <p className="text-xs font-medium text-muted">Autonomous LLM analyst (reference)</p>
+              <p className="mt-1 font-display text-2xl font-bold text-ink">{shadow.composite} <span className="text-sm font-semibold text-ink-soft">{shadow.verdict}</span></p>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-ink-soft">{shadow.rationale}</p>
+        </section>
+      )}
+
+      {trace && trace.length > 0 && (
+        <section>
+          <AgentTrace events={trace} />
+        </section>
+      )}
+
+      {/* ── Audit & methodology — collapsed by default, available to anyone ─── */}
+      <details className="group rounded-2xl border border-line bg-surface shadow-soft">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-6 py-4">
+          <div>
+            <span className="text-sm font-bold text-ink">Audit &amp; methodology</span>
+            <p className="mt-0.5 text-xs text-muted">The exact scoring math, the sourced facts behind it, and the full activity log.</p>
+          </div>
+          <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-muted transition group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+        </summary>
+
+        <div className="space-y-6 border-t border-line px-6 py-6">
+          {lastScore && (
+            <div>
+              <SectionLabel>How this score was computed</SectionLabel>
+              <ScoreBreakdown s={lastScore} />
+            </div>
+          )}
+          <ScoringExplainer />
+          <div>
+            <SectionLabel>Sourced facts — immutable, every value traces to a source</SectionLabel>
+            <div className="rounded-2xl border border-line bg-surface p-5">
+              <FactTable facts={facts} />
+            </div>
+          </div>
+          <div>
+            <SectionLabel>Activity log — append-only</SectionLabel>
+            <div className="rounded-2xl border border-line bg-surface p-5">
+              <EventTimeline events={events} />
+            </div>
+          </div>
+        </div>
+      </details>
+    </div>
+  );
+}

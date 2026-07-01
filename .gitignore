@@ -1,0 +1,28 @@
+# dependencies
+/node_modules
+
+# next.js
+/.next
+/out
+next-env.d.ts
+
+# typescript
+*.tsbuildinfo
+
+# local data — seeded SQLite catalogue + raw bulk downloads (rebuilt via `npm run load:uspto`)
+/data
+*.db
+
+# secrets — BYO keys live in the browser; nothing server-side is needed to run
+.env
+.env.*
+
+# claude code / agent scratch
+.claude/
+.superpowers/
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,5 @@
+patent_id	assignee_sequence	assignee_id	disambig_assignee_individual_name_first	disambig_assignee_individual_name_last	disambig_assignee_organization	assignee_type	location_id
+4786567	0	a1			Unisearch Ltd	3	loc1
+5111111	0	a2			Acme Co	3	loc2
+5222222	0	a3			B Co	3	loc3
+5333333	0	a4			C Co	3	loc4

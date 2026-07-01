@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-canvas text-ink antialiased font-sans;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Display headings use the rounded geometric face when available. */
+h1, h2, h3 {
+  @apply font-display;
+}
+
+/* Quiet, modern scrollbars so dense tables don't feel utilitarian. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cfd8e3 transparent;
+}
+*::-webkit-scrollbar { height: 10px; width: 10px; }
+*::-webkit-scrollbar-thumb { background: #d6dde7; border-radius: 9999px; border: 3px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: #c2ccda; background-clip: content-box; }
+
+/* Smooth the focus ring to the indigo action colour globally. */
+:focus-visible {
+  outline: 2px solid #3D5AF1;
+  outline-offset: 2px;
+}
