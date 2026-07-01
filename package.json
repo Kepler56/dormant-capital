@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
-    "load:uspto": "tsx scripts/load-uspto.ts"
+    "load:uspto": "tsx scripts/load-uspto.ts",
+    "push:turso": "tsx scripts/push-to-turso.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",

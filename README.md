@@ -98,24 +98,29 @@ No filesystem persistence is required in production, so it deploys to serverless
 
 ## Deploy to Vercel (with Turso)
 
-1. **Create the Turso DB from your local catalogue** (you already have `data/dormant.db`
-   after `npm run load:uspto`):
+1. **Create a Turso database** (browser only — no CLI needed): sign up at
+   [turso.tech](https://turso.tech) → create a database → copy its **URL** and generate an
+   **auth token**. (On Windows the Turso CLI needs WSL; this dashboard route avoids it.)
+2. **Push your local catalogue into it** (you already have `data/dormant.db` from
+   `npm run load:uspto`). In PowerShell:
+   ```powershell
+   $env:TURSO_DATABASE_URL="libsql://<db>-<org>.turso.io"
+   $env:TURSO_AUTH_TOKEN="<token>"
+   npm run push:turso
    ```
-   # one-time: install the CLI, then
-   turso db create dormant-capital --from-file ./data/dormant.db
-   turso db show dormant-capital --url          # → TURSO_DATABASE_URL
-   turso db tokens create dormant-capital       # → TURSO_AUTH_TOKEN
-   ```
-   (Alternatively, point the loader straight at Turso:
-   `TURSO_DATABASE_URL=… TURSO_AUTH_TOKEN=… npm run load:uspto`.)
-2. **Import the GitHub repo** into Vercel (Framework preset: Next.js — build/install
-   are auto-detected).
-3. **Add two Environment Variables** in the Vercel project: `TURSO_DATABASE_URL` and
+   `push:turso` bulk-copies every table from the local file into Turso in batches
+   (~35k patents in a minute or two) — no CLI, no re-download. Idempotent, so re-running
+   only fills gaps.
+3. **Import the GitHub repo** into Vercel (Framework preset: Next.js — auto-detected).
+4. **Add two Environment Variables** in the Vercel project: `TURSO_DATABASE_URL` and
    `TURSO_AUTH_TOKEN`. (No LLM keys — those stay bring-your-own, entered in the UI.)
-4. **Deploy.** `/api/analyze` declares `maxDuration = 300`; the long streaming run needs
+5. **Deploy.** `/api/analyze` declares `maxDuration = 300`; the long streaming run needs
    a Vercel **Pro** plan to use the full 300s (Hobby caps at 60s).
-5. Open the site → **Settings → Bring your own model** → paste a key → analyze.
+6. Open the site → **Settings → Bring your own model** → paste a key → analyze.
 
+> Have the Turso CLI (macOS/Linux/WSL)? You can skip step 2 with a one-shot file import:
+> `turso db create dormant-capital --from-file ./data/dormant.db`.
+>
 > Prefer a single long-running host instead? It also runs as-is on Railway / Render /
 > Fly.io — point `TURSO_DATABASE_URL` at Turso, or drop it and mount a volume so the
 > default `file:data/dormant.db` persists.
