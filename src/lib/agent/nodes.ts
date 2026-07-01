@@ -36,17 +36,18 @@ export async function researchNode(s: AgentStateT, deps: AgentDeps): Promise<Par
   const budget = Math.max(0, MAX_WEB_SEARCHES - s.searchCount);
   const queries = planned.slice(0, Math.min(4, budget));
   const trace: TraceEvent[] = [];
-  const collected: { sources: WebSource[] } = { sources: [] };
-  for (const q of queries) {
-    const r = await deps.search(q);
-    collected.sources.push(...r.sources);
+  // Run the pass's searches in PARALLEL — wall-clock is the slowest single search, not the sum.
+  const results = await Promise.all(queries.map((q) => deps.search(q).then((r) => ({ q, r }))));
+  const sources: WebSource[] = [];
+  for (const { q, r } of results) {
+    sources.push(...r.sources);
     trace.push(ev("research", `Searched: ${q}`, "ok", `${r.sources.length} sources`));
   }
   if (planned.length > queries.length) {
     trace.push(ev("research", `Search budget reached (max ${MAX_WEB_SEARCHES}) — skipped ${planned.length - queries.length} query(ies)`, "info"));
   }
   return {
-    sources: collected.sources,
+    sources,
     searchCount: queries.length,
     iteration: s.iteration + 1,
     trace,

@@ -24,7 +24,7 @@ const EMPTY: WebEvidence = { sources: [], text: "(no web results found)" };
 // search tool inside one request. The agent enforces a separate cap on the NUMBER of searches.
 export const MAX_SEARCH_RESULTS = 5;
 const MAX_TOOL_USES = 3;
-const DEFAULT_TIMEOUT_MS = 20000;
+const DEFAULT_TIMEOUT_MS = 12000;
 
 const searchInstruction = (query: string) =>
   `Search the web and report concise, factual findings for the query below. ` +

@@ -23,15 +23,18 @@ let _override: ChatFactory | null = null;
 /** TEST-ONLY: inject a fake chat factory (pass null to restore). */
 export function __setChatFactory(f: ChatFactory | null) { _override = f; }
 
+// maxRetries is kept LOW so a rate-limited/unavailable model surfaces in seconds — this seam
+// owns retries (below), and the whole run must fit a serverless time budget. LangChain's default
+// of 6 internal retries with exponential backoff would otherwise stack minutes onto every call.
 export function chatModel(o: { provider: Provider; model: string; apiKey: string }): BaseChatModel {
   if (_override) return _override(o);
   switch (o.provider) {
     case "openai":
-      return new ChatOpenAI({ model: o.model, apiKey: o.apiKey, temperature: 0 });
+      return new ChatOpenAI({ model: o.model, apiKey: o.apiKey, temperature: 0, maxRetries: 1 });
     case "anthropic":
-      return new ChatAnthropic({ model: o.model, apiKey: o.apiKey, temperature: 0 });
+      return new ChatAnthropic({ model: o.model, apiKey: o.apiKey, temperature: 0, maxRetries: 1 });
     case "gemini":
-      return new ChatGoogleGenerativeAI({ model: o.model, apiKey: o.apiKey, temperature: 0 });
+      return new ChatGoogleGenerativeAI({ model: o.model, apiKey: o.apiKey, temperature: 0, maxRetries: 1 });
   }
 }
 
@@ -39,6 +42,21 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function isTransient(err: unknown): boolean {
   const m = String((err as Error)?.message ?? err).toLowerCase();
   return /429|rate|quota|500|502|503|504|timeout|fetch failed|network|unavailable|overloaded/.test(m);
+}
+
+// A PERMANENT failure that retrying can never fix: the model isn't available to this key/plan
+// (free-tier quota of 0, unknown model, bad key). We fail fast with a clear, actionable message
+// instead of grinding through backoff. `limit: 0` is Gemini's tell that a model (e.g. 2.5-pro)
+// is not free-tier eligible.
+function permanentReason(err: unknown, model: string): string | null {
+  const m = String((err as Error)?.message ?? err).toLowerCase();
+  if (/limit:\s*0/.test(m))
+    return `Model "${model}" isn't available on your API plan (quota 0). Pick a free-tier model like gemini-2.5-flash, or use a billing-enabled key.`;
+  if (/api key not valid|invalid api key|invalid_api_key|unauthorized|permission denied|401|403/.test(m))
+    return `Your API key was rejected for "${model}". Check the key and that it can access this model.`;
+  if (/not found|does not exist|no such model|unknown model|model.*not supported/.test(m))
+    return `Model "${model}" was not found for this provider. Check the exact model id in Settings.`;
+  return null;
 }
 
 export async function extractJson<T>(
@@ -68,6 +86,8 @@ export async function extractJson<T>(
       return { data: schema.parse(repaired), model: r.model };
     } catch (err) {
       lastErr = err;
+      const permanent = permanentReason(err, r.model);
+      if (permanent) throw new Error(permanent);
       if (attempt < MAX - 1 && isTransient(err)) { await sleep(500 * 2 ** attempt); continue; }
       throw err;
     }

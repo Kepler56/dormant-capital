@@ -15,7 +15,7 @@ describe("computeDivergence", () => {
 });
 
 describe("constants", () => {
-  it("caps research iterations at 2", () => {
-    expect(MAX_RESEARCH_ITERATIONS).toBe(2);
+  it("caps research iterations to keep the run inside a serverless time budget", () => {
+    expect(MAX_RESEARCH_ITERATIONS).toBe(1);
   });
 });

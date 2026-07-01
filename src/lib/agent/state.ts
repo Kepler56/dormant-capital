@@ -11,10 +11,12 @@ import type { DormancyResidual, OppExecEvidence, ParsedPatent } from "@/lib/type
 import type { ScoreResult } from "@/lib/scoring/compose";
 import type { GateResult } from "@/lib/scoring/gate";
 
-export const MAX_RESEARCH_ITERATIONS = 2;
-// Hard ceiling on the number of web searches across a whole analysis, regardless of how many
-// queries the plan + critique loop produce. Bounds cost/latency for any BYO provider.
-export const MAX_WEB_SEARCHES = 6;
+// One research pass keeps the whole run inside a serverless time budget (a second critique-driven
+// pass roughly doubled wall-clock for a marginal evidence gain).
+export const MAX_RESEARCH_ITERATIONS = 1;
+// Hard ceiling on the number of web searches across a whole analysis. Searches in a pass run in
+// PARALLEL (see researchNode), so this also bounds fan-out. Kept small for latency on any provider.
+export const MAX_WEB_SEARCHES = 4;
 
 export type TraceEvent = {
   step: string;
