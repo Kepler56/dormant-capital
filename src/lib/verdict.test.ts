@@ -47,6 +47,26 @@ describe("verdictFor — Gate 0 route branching", () => {
     expect(v.label).not.toBe("Still active");
   });
 
+  it("REVIVAL that FAILS the dormancy gate (fee lapse + litigation) gets the lapsed-not-dormant headline, NOT 'still being maintained'", () => {
+    // Reachable state: the fee lapse forces route REVIVAL at Gate 0 (20 + 55 = 75), but
+    // active litigation (−40 → 35) drags the dormancy score under the floor (40), so the
+    // dormancy gate fails. Product/development "yes" so no upward residual nudges apply.
+    const lapsed = { ...base, maintenanceLapsed: true, anticipatedExpiration: false };
+    const now = new Date("1995-01-01");
+    const r = composeScore(lapsed, {
+      product_exists: { value: "yes", snippet: "product on market", confidence: "high" },
+      active_development: { value: "yes", snippet: "ongoing R&D", confidence: "high" },
+      active_litigation: { value: "yes", snippet: "infringement suit pending", confidence: "high" },
+    }, undefined, now);
+    expect(r.route).toBe("REVIVAL");
+    expect(r.passedGate).toBe(false);
+    const v = verdictFor(r);
+    expect(v.headline).toMatch(/fee lapse on record/i);
+    expect(v.headline).toMatch(/contested or in play/i);
+    expect(v.headline).not.toMatch(/still being maintained/i);
+    expect(v.label).not.toBe("Still active");
+  });
+
   it("REVIVAL that clears the dormancy gate gets the normal band verdict, no route override", () => {
     const lapsed = { ...base, maintenanceLapsed: true, anticipatedExpiration: false };
     const now = new Date("1995-01-01");

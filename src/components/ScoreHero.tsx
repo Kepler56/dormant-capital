@@ -12,7 +12,9 @@ import RouteBadge from "./RouteBadge";
 function MiniRing({ value, color, label, hint }: { value: number | null; color: string; label: string; hint: string }) {
   return (
     <div className="flex flex-col items-center text-center">
-      <Gauge value={value ?? 0} size={92} stroke={9} color={value === null ? "#CBD5E1" : color} />
+      {/* null flows through to Gauge, which renders a dash over an empty arc —
+          "not scored" must never read as "scored zero". */}
+      <Gauge value={value} size={92} stroke={9} color={value === null ? "#CBD5E1" : color} />
       <div className="mt-2 text-sm font-semibold text-ink">{label}</div>
       <div className="mt-0.5 max-w-[150px] text-[11px] leading-snug text-muted">{hint}</div>
     </div>

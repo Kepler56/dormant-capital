@@ -65,6 +65,24 @@ export function verdictFor(s: ScoreResult): Verdict {
         ringLabel: "Dormancy signal",
       };
     }
+    // REVIVAL that FAILED the dormancy gate: a fee lapse IS on record (that's what forced
+    // the route), so "still being maintained" would contradict the gate0 reasons shown
+    // right below. What actually happened: residual signals (litigation, a live product,
+    // ongoing development) pulled dormancy under the floor — the asset looks contested or
+    // in play, not walked away from.
+    if (s.route === "REVIVAL") {
+      return {
+        label: "Lapsed, not dormant",
+        tone: "watch",
+        headline:
+          "Fee lapse on record, but dormancy is not confirmed — signals suggest the asset is still contested or in play.",
+        blurb:
+          "A maintenance-fee lapse exists, yet other signals — litigation, a live product or ongoing development — indicate the owner hasn't truly walked away. The reasons below spell out exactly what pulled the dormancy call under.",
+        action: "Review the reasons list before acting; revisit if the conflicting activity dies down.",
+        ringValue: s.dormancy,
+        ringLabel: "Dormancy signal",
+      };
+    }
     // Gate 0 couldn't classify legal status from the facts on hand (still "conditional" —
     // not ruled out, just unverified). A cautious variant, distinct from "still active".
     if (s.route === "UNKNOWN" && s.gate0?.transactable === "conditional") {
@@ -79,8 +97,8 @@ export function verdictFor(s: ScoreResult): Verdict {
         ringLabel: "Dormancy signal",
       };
     }
-    // Default (including REVIVAL that didn't clear the dormancy gate, LICENSE_OR_ACQUIRE
-    // that isn't dormant, and pre-Gate-0 payloads with no `route` at all): still active.
+    // Default (LICENSE_OR_ACQUIRE that isn't dormant, and pre-Gate-0 payloads with no
+    // `route` at all): still active.
     return {
       label: "Still active",
       tone: "idle",

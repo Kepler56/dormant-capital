@@ -4,7 +4,7 @@
 // (no chart dependency), with a soft track, a coloured progress arc, and a centred value.
 // Renders server-side fine (no client hooks) so it works in Server Components.
 type GaugeProps = {
-  value: number; // 0–100
+  value: number | null; // 0–100; null = "no score yet" → empty arc, a dash instead of a digit
   size?: number;
   stroke?: number;
   color?: string; // arc colour (hex)
@@ -22,10 +22,12 @@ export default function Gauge({
   suffix,
   big,
 }: GaugeProps) {
-  const v = Math.max(0, Math.min(100, Math.round(value)));
+  // null means "not scored", which must never read as "scored zero" — show a dash
+  // over an empty arc instead of a bold 0.
+  const v = value === null ? null : Math.max(0, Math.min(100, Math.round(value)));
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
-  const dash = (v / 100) * c;
+  const dash = ((v ?? 0) / 100) * c;
   const center = size / 2;
 
   return (
@@ -44,9 +46,9 @@ export default function Gauge({
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className={`font-display font-bold tabular-nums leading-none text-ink ${big ? "text-4xl" : "text-2xl"}`}>
-          {v}
-          {suffix && <span className="ml-0.5 text-xs font-semibold text-muted">{suffix}</span>}
+        <span className={`font-display font-bold tabular-nums leading-none ${v === null ? "text-muted" : "text-ink"} ${big ? "text-4xl" : "text-2xl"}`}>
+          {v ?? "—"}
+          {v !== null && suffix && <span className="ml-0.5 text-xs font-semibold text-muted">{suffix}</span>}
         </span>
         {label && <span className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-muted">{label}</span>}
       </div>
