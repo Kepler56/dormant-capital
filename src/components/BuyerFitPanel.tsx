@@ -34,7 +34,9 @@ export default function BuyerFitPanel({
   const [mandateId, setMandateId] = useState<number | null>(mandates[0]?.id ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<{ score: number; summary: string | null } | null>(null);
+  // mandateName is captured at compute time so the chip is self-describing ("Score 85 — X")
+  // even if a future code path ever leaves a result on screen after the select changes.
+  const [result, setResult] = useState<{ score: number; summary: string | null; mandateName: string } | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -61,7 +63,7 @@ export default function BuyerFitPanel({
         setError(data.error ?? "Failed to score fit");
         return;
       }
-      setResult({ score: data.score!, summary: data.summary ?? null });
+      setResult({ score: data.score!, summary: data.summary ?? null, mandateName: mandateName(mandateId) });
       router.refresh();
     } catch {
       setError("Failed to score fit");
@@ -89,7 +91,7 @@ export default function BuyerFitPanel({
         <span className="text-sm font-bold text-ink">Buyer fit</span>
         {result && (
           <span className="rounded-lg bg-brand-soft px-2.5 py-1 text-xs font-semibold text-brand-dark">
-            Score {result.score}
+            Score {result.score} — {result.mandateName}
           </span>
         )}
       </div>
@@ -99,7 +101,13 @@ export default function BuyerFitPanel({
           <span className="text-[11px] font-medium text-muted">Mandate</span>
           <select
             value={mandateId ?? ""}
-            onChange={(e) => setMandateId(Number(e.target.value))}
+            onChange={(e) => {
+              // Switching mandates invalidates the displayed result: clear it (and any error)
+              // so Mandate A's score can never be misread as Mandate B's fit.
+              setMandateId(Number(e.target.value));
+              setResult(null);
+              setError("");
+            }}
             className="rounded-xl border border-line bg-surface px-3 py-1.5 text-sm text-ink focus:border-action focus:outline-none focus:ring-2 focus:ring-action-soft"
           >
             {mandates.map((m) => (
