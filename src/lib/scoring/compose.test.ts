@@ -43,8 +43,16 @@ describe("composeScore", () => {
       { commercial_relevance: { value: "high", snippet: "", confidence: "medium" },
         claim_breadth: { value: "medium", snippet: "", confidence: "medium" },
         ownership_clarity: { value: "high", snippet: "", confidence: "high" } });
+    // dormancy: 20 + 55 (hero) + 12 (no product) + 10 (no development) = 97, no stale
+    // bonus (no dated lapse event). opportunity: fc=120 -> citation 85;
+    // round(0.5*85 + 0.3*85(high) + 0.2*55(medium)) = 79. execution: lapsed (not
+    // expired) -> timeComponent 45; round(0.5*85(high ownership) + 0.5*45) = 65.
+    // composite: round(0.4*97 + 0.35*79 + 0.25*65) = 83 -> >= route(70) -> ROUTE.
     expect(r.passedGate).toBe(true);
-    expect(r.composite).toBeGreaterThan(0);
-    expect(["ROUTE", "WATCH", "PASS"]).toContain(r.band);
+    expect(r.dormancy).toBe(97);
+    expect(r.opportunity).toBe(79);
+    expect(r.execution).toBe(65);
+    expect(r.composite).toBe(83);
+    expect(r.band).toBe("ROUTE");
   });
 });
