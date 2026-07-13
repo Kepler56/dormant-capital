@@ -26,4 +26,11 @@ export const config = {
   executionTime: { active: 80, lapsed: 45, expired: 25 },
   // Shadow LLM scorer: |deterministic − shadow| within this many points ⇒ "agree".
   shadowAgreeThreshold: 15,
+  // Gate 0 — transactability. An "active" patent needs at least this much term left to be
+  // worth a license/acquisition route; a lapse younger than the restoration window is a
+  // strong revival candidate (unintentional-delay petitions get harder as the lapse ages).
+  gate0: { minTermYears: 3, restorationWindowYears: 2 },
+  // Route -> transactability score. TECHNOLOGY_PACKAGE kept for forward-compat (needs
+  // know-how/prototype facts we do not collect yet).
+  transactability: { LICENSE_OR_ACQUIRE: 90, TECHNOLOGY_PACKAGE: 95, REVIVAL: 55, REVIVAL_STALE: 35, PUBLIC_DOMAIN_INTEL: 15, TECH_INFO: 5, UNKNOWN: 30 },
 } as const;
