@@ -34,15 +34,43 @@ describe("composeScore", () => {
     expect(r.band).toBe("PASS");
   });
 
+  it("full-term-expired patent short-circuits at Gate 0 -> PUBLIC_DOMAIN_INTEL, no composite, even with strong residual/oppExec evidence", () => {
+    // `base` has anticipatedExpiration: true. Gate 0 must win BEFORE the dormancy gate or
+    // opportunity/execution get a chance to run — no meaning is spent scoring exclusivity
+    // that no longer exists, regardless of how compelling the LLM evidence looks.
+    const r = composeScore(base,
+      { product_exists: { value: "no", snippet: "", confidence: "high" },
+        active_development: { value: "no", snippet: "", confidence: "high" },
+        active_litigation: { value: "no", snippet: "", confidence: "high" } },
+      { commercial_relevance: { value: "high", snippet: "", confidence: "high" },
+        claim_breadth: { value: "high", snippet: "", confidence: "high" },
+        ownership_clarity: { value: "high", snippet: "", confidence: "high" } },
+      new Date("2026-07-13"));
+    expect(r.route).toBe("PUBLIC_DOMAIN_INTEL");
+    expect(r.transactability).toBe(15);
+    expect(r.band).toBe("PASS");
+    expect(r.composite).toBeNull();
+    expect(r.passedGate).toBe(false);
+    expect(r.gate0.legalStatus).toBe("expired_term");
+  });
+
   it("an abandoned, lapsed patent passes the gate and gets a composite band", () => {
     const lapsed = { ...base, maintenanceLapsed: true, anticipatedExpiration: false };
+    // Fixed clock well inside the 1986-filed patent's 20-year term (expires 2006-08-04),
+    // so Gate 0 sees the fee lapse as revivable rather than superseded by full-term expiry.
+    const now = new Date("1995-01-01");
     const r = composeScore(lapsed,
       { product_exists: { value: "no", snippet: "", confidence: "high" },
         active_development: { value: "no", snippet: "", confidence: "high" },
         active_litigation: { value: "no", snippet: "", confidence: "high" } },
       { commercial_relevance: { value: "high", snippet: "", confidence: "medium" },
         claim_breadth: { value: "medium", snippet: "", confidence: "medium" },
-        ownership_clarity: { value: "high", snippet: "", confidence: "high" } });
+        ownership_clarity: { value: "high", snippet: "", confidence: "high" } },
+      now);
+    // Gate 0: undated lapse (no legalEvents) + term still remaining -> REVIVAL, conditional.
+    expect(r.route).toBe("REVIVAL");
+    expect(r.transactability).toBe(55);
+    expect(r.gate0.transactable).toBe("conditional");
     // dormancy: 20 + 55 (hero) + 12 (no product) + 10 (no development) = 97, no stale
     // bonus (no dated lapse event). opportunity: fc=120 -> citation 85;
     // round(0.5*85 + 0.3*85(high) + 0.2*55(medium)) = 79. execution: lapsed (not

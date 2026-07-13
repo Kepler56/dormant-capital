@@ -14,6 +14,7 @@ import { type ParsedPatent } from "@/lib/types";
 import { PROMPT_VERSION as DORM_V } from "@/lib/prompts/dormancy-residual";
 import { PROMPT_VERSION as OE_V } from "@/lib/prompts/opportunity-execution";
 import { SHADOW_VERSION } from "@/lib/prompts/shadow-score";
+import { SCORING_VERSION } from "@/lib/scoring/config";
 
 export type AnalyzeResult = { result: ScoreResult; shadow: ShadowScore | null; divergence: Divergence | null };
 
@@ -68,8 +69,16 @@ export async function* runAnalysis(
       confidence: null, rationale: shadow.rationale, flags: { verdict: shadow.verdict, divergence },
       sources: [{ source: "llm:" + s.shadowModel }], modelVersion: s.shadowModel || "unknown", promptVersion: SHADOW_VERSION });
   }
+  // Transactability (Gate 0) is its own judgment row (Upgrade 4: split outputs) — facts-only,
+  // deterministic, and reported regardless of whether the asset is dormant/transactable.
+  await insertJudgment(assetId, { dimension: "transactability", subDimension: "gate0", score: result.transactability,
+    rationale: result.gate0.reasons.join(" "), flags: result.gate0.flags,
+    modelVersion: "deterministic", promptVersion: SCORING_VERSION });
 
-  await appendEvent("score_computed", assetId, { ...result, trace, shadow, divergence });
+  // Record the engine (provider+model) so runs can be compared across models — NEVER the
+  // apiKey. Copy exactly the two fields explicitly; never spread `cfg` into the payload.
+  const engine = cfg ? { provider: cfg.provider, model: cfg.model } : null;
+  await appendEvent("score_computed", assetId, { ...result, trace, shadow, divergence, engine });
   return { result, shadow, divergence };
 }
 
