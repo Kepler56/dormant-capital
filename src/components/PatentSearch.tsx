@@ -7,7 +7,7 @@
 // @/lib/db or other server modules — all server work goes through fetch.
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 
 // ─── Catalogue types (mirrors /api/index response) ───────────────────────────
 type IndexRow = {
@@ -47,17 +47,52 @@ function buildQS(f: Filters, page: number): string {
   return p.toString();
 }
 
+const ENTITY_STATUS_VALUES = new Set(["large", "small", "micro"]);
+const STATUS_VALUES = new Set(["lapsed", "maintained"]);
+const SORT_VALUES = new Set(["number", "year_desc", "year_asc"]);
+
+// Inverse of buildQS: parse a URL's query params back into { filters, page }, falling back to
+// INITIAL/0 for anything missing or invalid (bogus enum values, non-numeric page). One
+// vocabulary shared by fetch and address bar, so the URL is always a faithful round-trip.
+function filtersFromParams(sp: URLSearchParams): { filters: Filters; page: number } {
+  const entityStatus = sp.get("entityStatus") ?? "";
+  const status = sp.get("status") ?? "";
+  const sort = sp.get("sort") ?? "number";
+  const filters: Filters = {
+    q: sp.get("q") ?? "",
+    assignee: sp.get("assignee") ?? "",
+    yearAfter: sp.get("yearAfter") ?? "",
+    yearBefore: sp.get("yearBefore") ?? "",
+    cpc: sp.get("cpc") ?? "",
+    entityStatus: ENTITY_STATUS_VALUES.has(entityStatus) ? (entityStatus as Filters["entityStatus"]) : "",
+    status: STATUS_VALUES.has(status) ? (status as Filters["status"]) : "",
+    sort: SORT_VALUES.has(sort) ? (sort as Filters["sort"]) : "number",
+  };
+  const rawPage = sp.get("page");
+  const parsedPage = rawPage === null ? 0 : Number.parseInt(rawPage, 10);
+  const page = Number.isInteger(parsedPage) && parsedPage >= 0 ? parsedPage : 0;
+  return { filters, page };
+}
+
 const INPUT =
   "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink placeholder-muted focus:border-action focus:outline-none focus:ring-2 focus:ring-action-soft";
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function PatentSearch() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // Parsed once, from the URL present at mount (covers first load and Back/Forward, since a
+  // fresh mount only happens on those). Re-parsing on every searchParams change would fight
+  // with our own router.replace() writes below, so this runs exactly once via useState's
+  // lazy initializer, not an effect.
+  const [initial] = useState(() => filtersFromParams(searchParams));
 
   // `filters` is what the current results reflect; `pending` is the in-progress form.
-  const [filters, setFilters] = useState<Filters>(INITIAL);
-  const [pending, setPending] = useState<Filters>(INITIAL);
-  const [page, setPage] = useState(0);
+  const [filters, setFilters] = useState<Filters>(initial.filters);
+  const [pending, setPending] = useState<Filters>(initial.filters);
+  const [page, setPage] = useState(initial.page);
   const [result, setResult] = useState<IndexResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,7 +125,11 @@ export default function PatentSearch() {
     }
   }, []);
 
-  useEffect(() => { run(INITIAL, 0); }, [run]);
+  // Fetch once on mount using the filters/page parsed from the URL (or INITIAL/0 if bare).
+  // `initial` is stable for the lifetime of this component instance (see useState above), so
+  // this effect fires exactly once and never refetches from a params watcher.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { run(initial.filters, initial.page); }, [run]);
 
   // ── Lazy enrich: after a page renders, POST the unenriched numbers ───────────
   useEffect(() => {
@@ -151,15 +190,27 @@ export default function PatentSearch() {
     setFilters(pending);
     setPage(0);
     run(pending, 0);
+    router.replace(`${pathname}?${buildQS(pending, 0)}`, { scroll: false });
   }
   function handleReset() {
     setPending(INITIAL);
     setFilters(INITIAL);
     setPage(0);
     run(INITIAL, 0);
+    router.replace(pathname, { scroll: false });
   }
-  function prev() { const p = Math.max(0, page - 1); setPage(p); run(filters, p); }
-  function next() { const p = page + 1; setPage(p); run(filters, p); }
+  function prev() {
+    const p = Math.max(0, page - 1);
+    setPage(p);
+    run(filters, p);
+    router.replace(`${pathname}?${buildQS(filters, p)}`, { scroll: false });
+  }
+  function next() {
+    const p = page + 1;
+    setPage(p);
+    run(filters, p);
+    router.replace(`${pathname}?${buildQS(filters, p)}`, { scroll: false });
+  }
 
   function showingLabel(total: number, p: number, rowCount: number): string {
     const from = p * PAGE_SIZE + 1;
