@@ -88,11 +88,18 @@ export default function PatentSearch() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // Parsed once, from the URL present at mount (covers first load and Back/Forward, since a
-  // fresh mount only happens on those). Re-parsing on every searchParams change would fight
-  // with our own router.replace() writes below, so this runs exactly once via useState's
-  // lazy initializer, not an effect.
+  // Seeds first paint from the URL present at mount. NOT the only entry path any more: the
+  // App Router does not remount this component for same-segment navigation (e.g. the sidebar
+  // "Patents" link while already on a filtered /patents?...), and Back/Forward between two
+  // /patents?... history entries only changes searchParams — neither remounts us. The effect
+  // below watches searchParams for exactly that case and resyncs filters/pending/page/table.
   const [initial] = useState(() => filtersFromParams(searchParams));
+
+  // Canonical query string (via buildQS) that THIS component itself last wrote to the URL,
+  // updated at every router.replace() call below. The searchParams-watching effect compares
+  // the incoming params against this ref to tell "we navigated here from outside" (sidebar
+  // link, Back/Forward) apart from our own write echoing back through useSearchParams().
+  const lastSelfWrittenQS = useRef(buildQS(initial.filters, initial.page));
 
   // `filters` is what the current results reflect; `pending` is the in-progress form.
   const [filters, setFilters] = useState<Filters>(initial.filters);
@@ -137,9 +144,27 @@ export default function PatentSearch() {
 
   // Fetch once on mount using the filters/page parsed from the URL (or INITIAL/0 if bare).
   // `initial` is stable for the lifetime of this component instance (see useState above), so
-  // this effect fires exactly once and never refetches from a params watcher.
+  // this effect fires exactly once for the mount fetch — external navigation is handled below.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { run(initial.filters, initial.page); }, [run]);
+
+  // Resync on external navigation: same-segment nav (e.g. clicking the sidebar "Patents" link
+  // while already on a filtered /patents?...) and Back/Forward between two /patents?... history
+  // entries both change searchParams without remounting this component. When the incoming params
+  // canonicalize to something other than the last query string we ourselves wrote, treat it as
+  // external and re-parse/re-run; when they match, it's our own router.replace() echoing back, so
+  // skip it to avoid double-fetching our own searches.
+  useEffect(() => {
+    const parsed = filtersFromParams(searchParams);
+    const canonical = buildQS(parsed.filters, parsed.page);
+    if (canonical === lastSelfWrittenQS.current) return;
+    lastSelfWrittenQS.current = canonical;
+    setFilters(parsed.filters);
+    setPending(parsed.filters);
+    setPage(parsed.page);
+    run(parsed.filters, parsed.page);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // ── Lazy enrich: after a page renders, POST the unenriched numbers ───────────
   useEffect(() => {
@@ -230,6 +255,7 @@ export default function PatentSearch() {
     setFilters(pending);
     setPage(0);
     run(pending, 0);
+    lastSelfWrittenQS.current = buildQS(pending, 0);
     router.replace(`${pathname}?${buildQS(pending, 0)}`, { scroll: false });
   }
   function handleReset() {
@@ -237,18 +263,23 @@ export default function PatentSearch() {
     setFilters(INITIAL);
     setPage(0);
     run(INITIAL, 0);
+    // Written bare (no query string), but that URL parses back to INITIAL/0 — same canonical
+    // form recorded here — so the searchParams watcher recognizes this as our own write.
+    lastSelfWrittenQS.current = buildQS(INITIAL, 0);
     router.replace(pathname, { scroll: false });
   }
   function prev() {
     const p = Math.max(0, page - 1);
     setPage(p);
     run(filters, p);
+    lastSelfWrittenQS.current = buildQS(filters, p);
     router.replace(`${pathname}?${buildQS(filters, p)}`, { scroll: false });
   }
   function next() {
     const p = page + 1;
     setPage(p);
     run(filters, p);
+    lastSelfWrittenQS.current = buildQS(filters, p);
     router.replace(`${pathname}?${buildQS(filters, p)}`, { scroll: false });
   }
 

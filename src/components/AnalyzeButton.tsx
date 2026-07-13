@@ -33,10 +33,17 @@ export default function AnalyzeButton({ assetId, num }: { assetId: number; num: 
     if (!selected) return; // no engine configured — the hint below tells the user what to do
     const llmConfig = toLLMConfig(selected);
     setBusy(true); setMsg(""); setLive([]);
-    const result = await streamAnalyze({ assetId, num, llmConfig }, (e) => setLive((p) => [...p, e]));
-    if (!result.ok) setMsg(result.error ?? "Failed");
-    setBusy(false);
-    router.refresh();
+    try {
+      const result = await streamAnalyze({ assetId, num, llmConfig }, (e) => setLive((p) => [...p, e]));
+      if (!result.ok) setMsg(result.error ?? "Failed");
+    } catch (e) {
+      // streamAnalyze REJECTS (rather than resolving ok:false) on fetch failure or a mid-stream
+      // connection drop — without this catch, busy would stay true forever ("Analyzing…").
+      setMsg((e as Error).message || "Analysis failed");
+    } finally {
+      setBusy(false);
+      router.refresh();
+    }
   }
 
   return (

@@ -4,13 +4,17 @@
 // side. This is a pure, server-compatible table: no hooks, all data pre-shaped by the page. When
 // two or more runs exist we add a spread row (max−min per numeric column) so a buyer can see at a
 // glance whether engines actually disagree, or whether the deterministic mapping just reproduces
-// the same verdict regardless of which model read the evidence.
+// the same verdict regardless of which model read the evidence. The run list can mix scoring
+// versions (e.g. scoring-v1 and scoring-v2 runs have different band cutoffs), so the spread is
+// scoped to runs sharing the most recent run's version — otherwise an engine-agreement caption
+// would be lying about a scoring-version delta.
 import { Card, SectionLabel } from "./ui/Card";
 import RouteBadge from "./RouteBadge";
 import ScoreBadge from "./ScoreBadge";
 
 export type RunHistoryRun = {
   at: string;
+  version: string | null;
   engine: { provider: string; model: string } | null;
   route: string | null;
   dormancy: number | null;
@@ -32,11 +36,26 @@ function spreadOf(runs: RunHistoryRun[], col: NumericCol): number | null {
   return Math.max(...vals) - Math.min(...vals);
 }
 
+// Short muted tag for a run's scoring version, e.g. "scoring-v2" -> "v2". Runs from before
+// `version` was recorded in the score_computed payload carry null and show as "—".
+function versionTag(version: string | null): string {
+  if (!version) return "—";
+  const parts = version.split("-");
+  return parts[parts.length - 1] || version;
+}
+
 export default function RunHistory({ runs }: { runs: RunHistoryRun[] }) {
   if (runs.length < 1) return null;
 
-  const spreads = Object.fromEntries(NUMERIC_COLS.map((c) => [c, spreadOf(runs, c)])) as Record<NumericCol, number | null>;
-  const anyDisagreement = runs.length >= 2 && NUMERIC_COLS.some((c) => (spreads[c] ?? 0) >= SPREAD_THRESHOLD);
+  // Spread is scoped to runs sharing the most recent run's scoring version — mixing scoring-v1
+  // and scoring-v2 runs (different band cutoffs) would otherwise read as engine disagreement
+  // when it's really a scoring-engine change. Version-null runs (pre-dating the field) never
+  // join the scope, so the spread never silently includes one.
+  const latestVersion = runs[0]?.version ?? null;
+  const versionScopedRuns = latestVersion === null ? [] : runs.filter((r) => r.version === latestVersion);
+  const showSpread = versionScopedRuns.length >= 2;
+  const spreads = Object.fromEntries(NUMERIC_COLS.map((c) => [c, spreadOf(versionScopedRuns, c)])) as Record<NumericCol, number | null>;
+  const anyDisagreement = showSpread && NUMERIC_COLS.some((c) => (spreads[c] ?? 0) >= SPREAD_THRESHOLD);
 
   return (
     <section>
@@ -46,6 +65,7 @@ export default function RunHistory({ runs }: { runs: RunHistoryRun[] }) {
           <thead>
             <tr className="border-b border-line text-left text-xs font-semibold uppercase tracking-wide text-muted">
               <th className="py-2 pr-3 font-semibold">Date</th>
+              <th className="py-2 pr-3 font-semibold">Ver.</th>
               <th className="py-2 pr-3 font-semibold">Engine</th>
               <th className="py-2 pr-3 font-semibold">Route</th>
               <th className="py-2 pr-3 text-right font-semibold">Dormancy</th>
@@ -60,6 +80,7 @@ export default function RunHistory({ runs }: { runs: RunHistoryRun[] }) {
             {runs.map((r, i) => (
               <tr key={i} className="border-b border-line last:border-0">
                 <td className="py-2 pr-3 text-ink-soft">{new Date(r.at).toLocaleString()}</td>
+                <td className="py-2 pr-3 text-xs font-medium text-muted">{versionTag(r.version)}</td>
                 <td className="py-2 pr-3 font-mono text-xs text-ink-soft">
                   {r.engine?.provider && r.engine?.model ? `${r.engine.provider}/${r.engine.model}` : "—"}
                 </td>
@@ -73,10 +94,10 @@ export default function RunHistory({ runs }: { runs: RunHistoryRun[] }) {
               </tr>
             ))}
           </tbody>
-          {runs.length >= 2 && (
+          {showSpread && (
             <tfoot>
               <tr className="border-t border-line text-xs font-semibold text-muted">
-                <td className="py-2 pr-3" colSpan={3}>Spread (max − min)</td>
+                <td className="py-2 pr-3" colSpan={4}>Spread (max − min), {versionTag(latestVersion)} runs only</td>
                 {NUMERIC_COLS.filter((c) => c !== "composite").map((c) => (
                   <td
                     key={c}
