@@ -18,7 +18,7 @@ export type RunHistoryRun = {
   opportunity: number | null;
   execution: number | null;
   composite: number | null;
-  band: string;
+  band: string | null;
 };
 
 // Columns the spread row aggregates — every numeric score dimension.
@@ -61,7 +61,7 @@ export default function RunHistory({ runs }: { runs: RunHistoryRun[] }) {
               <tr key={i} className="border-b border-line last:border-0">
                 <td className="py-2 pr-3 text-ink-soft">{new Date(r.at).toLocaleString()}</td>
                 <td className="py-2 pr-3 font-mono text-xs text-ink-soft">
-                  {r.engine ? `${r.engine.provider}/${r.engine.model}` : "—"}
+                  {r.engine?.provider && r.engine?.model ? `${r.engine.provider}/${r.engine.model}` : "—"}
                 </td>
                 <td className="py-2 pr-3">{r.route ? <RouteBadge route={r.route} /> : <span className="text-muted">—</span>}</td>
                 <td className="py-2 pr-3 text-right tabular-nums text-ink">{r.dormancy ?? "—"}</td>

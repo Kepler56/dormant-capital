@@ -51,9 +51,11 @@ export default async function PatentDetail({ params }: { params: Promise<{ id: s
   const trace = lastEvent?.trace ?? null;
 
   // Runs for the comparison table — tolerant of old payloads that predate engine/route/
-  // transactability (they render as "—"/null rather than throwing).
+  // transactability (they render as "—"/null rather than throwing). Every missing field maps
+  // to null — never a display literal — so components render their own honest empty state
+  // (ScoreBadge shows a dash for a null band instead of fabricating a PASS pill).
   const runs: RunHistoryRun[] = scoreEvents.map((e) => {
-    const p = e.payload as Partial<ScoreEventPayload>;
+    const p = (typeof e.payload === "object" && e.payload !== null ? e.payload : {}) as Partial<ScoreEventPayload>;
     return {
       at: e.created_at,
       engine: p.engine ?? null,
@@ -63,7 +65,7 @@ export default async function PatentDetail({ params }: { params: Promise<{ id: s
       opportunity: p.opportunity ?? null,
       execution: p.execution ?? null,
       composite: p.composite ?? null,
-      band: p.band ?? "—",
+      band: p.band ?? null,
     };
   });
 
