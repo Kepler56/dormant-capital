@@ -49,6 +49,13 @@ export function runGate0(p: ParsedPatent, now: Date = new Date()): Gate0Result {
       transactabilityScore: plausible ? t.REVIVAL : t.REVIVAL_STALE, flags, reasons };
   }
 
+  // Application that never granted: technical information only.
+  if (!p.grantDate && p.filingDate) {
+    reasons.push("No grant on record — application without subsisting rights; technical information only.");
+    return { legalStatus: "abandoned", route: "TECH_INFO", transactable: "no",
+      transactabilityScore: t.TECH_INFO, flags, reasons };
+  }
+
   if (term !== null && term > 0) {
     const short = term < config.gate0.minTermYears;
     if (short) { flags.push("short_remaining_term"); reasons.push(`Only ~${term.toFixed(1)} years of term remain.`); }

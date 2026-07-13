@@ -40,11 +40,18 @@ describe("runGate0", () => {
     expect(r).toMatchObject({ legalStatus: "active", route: "LICENSE_OR_ACQUIRE", transactable: "yes", transactabilityScore: 90 });
   });
   it("in-force but < minTermYears left -> still active, flagged short_term, reduced score", () => {
-    const p = { ...base, filingDate: "2008-01-01" }; // ~1.5y left
+    const p = { ...base, filingDate: "2008-01-01", grantDate: "2011-03-01" }; // ~1.5y left
     const r = runGate0(p, NOW);
     expect(r.legalStatus).toBe("active");
     expect(r.flags).toContain("short_remaining_term");
     expect(r.transactabilityScore).toBeLessThan(90);
+  });
+  it("filed but never granted -> abandoned, TECH_INFO, not transactable", () => {
+    // ~9y of nominal term from filing remain, but the abandoned branch precedes the
+    // term check — an application without a grant has no subsisting rights to license.
+    const p = { ...base, filingDate: "2015-01-01" };
+    const r = runGate0(p, NOW);
+    expect(r).toMatchObject({ legalStatus: "abandoned", route: "TECH_INFO", transactable: "no", transactabilityScore: 5 });
   });
   it("no usable facts -> unknown, needs_data flag", () => {
     const r = runGate0(base, NOW);
