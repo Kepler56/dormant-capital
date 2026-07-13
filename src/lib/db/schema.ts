@@ -94,5 +94,14 @@ export async function ensureSchema(db: Client): Promise<void> {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_outcome_asset ON outcome(asset_id);
+
+    -- mandate: a buyer's standing thesis (brief Upgrade 3). Paired with an asset it drives
+    -- the per-(mandate, asset) Buyer-Fit Score — the LLM extracts fit evidence, never a number.
+    CREATE TABLE IF NOT EXISTS mandate (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      thesis TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }

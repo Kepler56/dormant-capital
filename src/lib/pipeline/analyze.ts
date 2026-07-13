@@ -19,8 +19,9 @@ import { SCORING_VERSION } from "@/lib/scoring/config";
 export type AnalyzeResult = { result: ScoreResult; shadow: ShadowScore | null; divergence: Divergence | null };
 
 // Rebuild a ParsedPatent from stored facts (a fact key/value map). Facts are read-only here;
-// this module never writes the fact table.
-async function factsToParsed(assetId: number, num: string): Promise<ParsedPatent> {
+// this module never writes the fact table. Exported: the buyer-fit route (Task 12) reuses it
+// so both callers rebuild a ParsedPatent identically instead of duplicating the fact-map logic.
+export async function factsToParsed(assetId: number, num: string): Promise<ParsedPatent> {
   const m = new Map((await getFacts(assetId)).map((f) => [f.key, f.value]));
   const g = <T>(k: string, d: T): T => (m.has(k) ? (m.get(k) as T) : d);
   return {

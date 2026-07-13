@@ -20,6 +20,7 @@ const Icon = ({ path, className = "" }: { path: string; className?: string }) =>
 const ICONS = {
   dashboard: "M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6V11h-6v9Zm0-16v5h6V4h-6Z",
   patents: "M7 3h7l5 5v13H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm7 0v5h5M9 13h7M9 17h5",
+  mandates: "M9 12h6m-6 4h6M7 21h10a2 2 0 0 0 2-2V7l-5-5H7a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2Zm5-19v5h5",
   settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8-3a8 8 0 0 0-.2-1.8l2-1.5-2-3.4-2.3 1a8 8 0 0 0-3-1.8L14 1h-4l-.5 2.7a8 8 0 0 0-3 1.8l-2.3-1-2 3.4 2 1.5A8 8 0 0 0 4 12c0 .6 0 1.2.2 1.8l-2 1.5 2 3.4 2.3-1a8 8 0 0 0 3 1.8L10 23h4l.5-2.7a8 8 0 0 0 3-1.8l2.3 1 2-3.4-2-1.5c.1-.6.2-1.2.2-1.8Z",
 } as const;
 
@@ -28,6 +29,7 @@ type NavSection = "Workspace" | "Configure";
 const NAV: { href: string; label: string; icon: keyof typeof ICONS; section: NavSection }[] = [
   { href: "/", label: "Dashboard", icon: "dashboard", section: "Workspace" },
   { href: "/patents", label: "Patents", icon: "patents", section: "Workspace" },
+  { href: "/mandates", label: "Mandates", icon: "mandates", section: "Workspace" },
   { href: "/settings", label: "Settings", icon: "settings", section: "Configure" },
 ];
 

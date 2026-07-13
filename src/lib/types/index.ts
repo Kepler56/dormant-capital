@@ -49,6 +49,16 @@ export const OppExecEvidence = z.object({
 });
 export type OppExecEvidence = z.infer<typeof OppExecEvidence>;
 
+// Buyer-Fit evidence (brief Upgrade 3) — still evidence, never a 0-100 score. Judges how
+// well ONE asset matches ONE buyer mandate's thesis. blocking_mismatch is a disqualifier
+// (wrong domain, wrong geography, incompatible tech) the deterministic mapper floors on.
+export const BuyerFitEvidence = z.object({
+  thesis_alignment: evidence(),   // value: "low" | "medium" | "high"
+  blocking_mismatch: evidence(),  // value: "yes" | "no" | "unknown"
+  fit_summary: z.string().optional(),
+});
+export type BuyerFitEvidence = z.infer<typeof BuyerFitEvidence>;
+
 // Parsed, structured facts the scraper produces (before they become fact rows).
 export type ParsedPatent = {
   patentNumber: string;
