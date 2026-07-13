@@ -23,6 +23,30 @@ let _override: ChatFactory | null = null;
 /** TEST-ONLY: inject a fake chat factory (pass null to restore). */
 export function __setChatFactory(f: ChatFactory | null) { _override = f; }
 
+// ── Model capability: temperature ───────────────────────────────────────────
+// OpenAI reasoning models (o-series, gpt-5 family) reject any non-default temperature
+// with a 400. We (a) omit temperature proactively for known families and (b) learn at
+// runtime: if a provider 400s on temperature, the model id is marked and the call is
+// retried once without it — so future model families work without a code change.
+const NO_TEMPERATURE = new Set<string>();
+const NO_TEMP_PATTERNS = [/^o\d/i, /^gpt-5/i];
+
+export function markNoTemperature(provider: Provider, model: string): void {
+  NO_TEMPERATURE.add(`${provider}:${model}`);
+}
+
+export function buildModelOptions(provider: Provider, model: string): { temperature?: number } {
+  if (NO_TEMPERATURE.has(`${provider}:${model}`)) return {};
+  if (provider === "openai" && NO_TEMP_PATTERNS.some((re) => re.test(model))) return {};
+  // temperature 0 for reproducibility everywhere it is accepted.
+  return { temperature: 0 };
+}
+
+export function isTemperatureError(err: unknown): boolean {
+  const m = String((err as Error)?.message ?? err).toLowerCase();
+  return m.includes("temperature") && /unsupported|does not support|not supported/.test(m);
+}
+
 // maxRetries is kept LOW so a rate-limited/unavailable model surfaces in seconds — this seam
 // owns retries (below), and the whole run must fit a serverless time budget. LangChain's default
 // of 6 internal retries with exponential backoff would otherwise stack minutes onto every call.
@@ -30,11 +54,11 @@ export function chatModel(o: { provider: Provider; model: string; apiKey: string
   if (_override) return _override(o);
   switch (o.provider) {
     case "openai":
-      return new ChatOpenAI({ model: o.model, apiKey: o.apiKey, temperature: 0, maxRetries: 1 });
+      return new ChatOpenAI({ model: o.model, apiKey: o.apiKey, ...buildModelOptions("openai", o.model), maxRetries: 1 });
     case "anthropic":
-      return new ChatAnthropic({ model: o.model, apiKey: o.apiKey, temperature: 0, maxRetries: 1 });
+      return new ChatAnthropic({ model: o.model, apiKey: o.apiKey, ...buildModelOptions("anthropic", o.model), maxRetries: 1 });
     case "gemini":
-      return new ChatGoogleGenerativeAI({ model: o.model, apiKey: o.apiKey, temperature: 0, maxRetries: 1 });
+      return new ChatGoogleGenerativeAI({ model: o.model, apiKey: o.apiKey, ...buildModelOptions("gemini", o.model), maxRetries: 1 });
   }
 }
 
@@ -56,6 +80,8 @@ function permanentReason(err: unknown, model: string): string | null {
     return `Your API key was rejected for "${model}". Check the key and that it can access this model.`;
   if (/not found|does not exist|no such model|unknown model|model.*not supported/.test(m))
     return `Model "${model}" was not found for this provider. Check the exact model id in Settings.`;
+  if (/unsupported value|unsupported parameter|does not support/.test(m))
+    return `Model "${model}" rejected a request parameter (${(err as Error)?.message ?? ""}). This model may need different settings — try again; if it persists, report the model id.`;
   return null;
 }
 
@@ -67,11 +93,11 @@ export async function extractJson<T>(
   if (!cfg) throw new Error("No model configured. Add your provider, model and API key in Settings.");
   void tier; // tier is informational only now — one BYO model serves every tier.
   const r = cfg;
-  const structured = chatModel(r).withStructuredOutput(schema as never, { name: "extract" });
 
   const MAX = 3;
   let lastErr: unknown;
   for (let attempt = 0; attempt < MAX; attempt++) {
+    const structured = chatModel(r).withStructuredOutput(schema as never, { name: "extract" });
     try {
       const raw = await structured.invoke(prompt);
       const parsed = schema.safeParse(raw);
@@ -86,6 +112,11 @@ export async function extractJson<T>(
       return { data: schema.parse(repaired), model: r.model };
     } catch (err) {
       lastErr = err;
+      if (isTemperatureError(err) && !NO_TEMPERATURE.has(`${r.provider}:${r.model}`)) {
+        // Learn: this model rejects explicit temperature. Rebuild without it and retry.
+        markNoTemperature(r.provider, r.model);
+        continue; // does not consume a transient-retry: capability fix, not flake
+      }
       const permanent = permanentReason(err, r.model);
       if (permanent) throw new Error(permanent);
       if (attempt < MAX - 1 && isTransient(err)) { await sleep(500 * 2 ** attempt); continue; }
