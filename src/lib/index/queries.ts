@@ -4,6 +4,7 @@
 // instant and never touches the network — the fix for the Google Patents 503s.
 import { all, get, run } from "@/lib/db/connection";
 import type { InArgs } from "@libsql/client";
+import { SECTORS, SECTOR_KEYS, type SectorKey } from "./sectors";
 
 export type IndexRow = {
   number: string;
@@ -22,6 +23,9 @@ export type IndexFilters = {
   cpc?: string;         // CPC class prefix, e.g. "H01L" (sanitised before use)
   entityStatus?: "large" | "small" | "micro"; // USPTO fee entity size
   status?: "lapsed" | "maintained"; // maintenance-fee status (supersedes dormantOnly)
+  sector?: SectorKey;   // human-friendly grouping of CPC prefixes (see ./sectors)
+  lapseAge?: "recent2" | "recent5" | "stale5"; // recency of the most recent EXP. lapse event
+  analysis?: "analyzed" | "not_analyzed" | "route_license" | "route_revival" | "route_pdi" | "route_tech";
   sort?: "number" | "year_desc" | "year_asc";
   page?: number;       // 0-based
   pageSize?: number;
@@ -49,6 +53,38 @@ const ENTITY_STATUS_EXISTS =
   `EXISTS (SELECT 1 FROM maintenance_event me
            WHERE me.patent_number = patent_index.number AND me.entity_status = ?)`;
 
+// Lapse-recency EXISTS fragments. `EXP.` (with the trailing period) is the exact maintenance-event
+// code for a fee lapse — never confuse this with the `maintenance_lapsed` FACT above: an EXP.
+// event can coexist with a later reinstatement, so this is about WHEN a lapse last happened, not
+// whether the patent is CURRENTLY dormant (the fact/`status` filter is the authority on that).
+const EXP_EXISTS =
+  `EXISTS (SELECT 1 FROM maintenance_event me
+           WHERE me.patent_number = patent_index.number AND me.event_code = 'EXP.')`;
+const EXP_RECENT_EXISTS = (years: 2 | 5) =>
+  `EXISTS (SELECT 1 FROM maintenance_event me
+           WHERE me.patent_number = patent_index.number AND me.event_code = 'EXP.'
+             AND me.event_date >= date('now', '-${years} years'))`;
+
+// Any past score_computed run for this asset (regardless of engine/model/version). Correlated via
+// asset.external_id like the other EXISTS fragments above.
+const ANALYZED_EXISTS =
+  `EXISTS (SELECT 1 FROM asset a JOIN event_log e ON e.asset_id = a.id
+           WHERE a.external_id = patent_index.number AND e.event_type = 'score_computed')`;
+// Same EXISTS, additionally constrained to a payload LIKE match — used for the route_* filters.
+const ANALYZED_ROUTE_EXISTS =
+  `EXISTS (SELECT 1 FROM asset a JOIN event_log e ON e.asset_id = a.id
+           WHERE a.external_id = patent_index.number AND e.event_type = 'score_computed'
+             AND e.payload LIKE ?)`;
+// Route strings are server-side constants (never user input) — the whitelisted filter value picks
+// a key into this map, and the LIKE param is built from the mapped value, not the raw request.
+// Semantics: matches if ANY past run recorded that route, even if a later run recorded another.
+const ROUTE_LIKE: Record<"route_license" | "route_revival" | "route_pdi" | "route_tech", string> = {
+  route_license: "LICENSE_OR_ACQUIRE",
+  route_revival: "REVIVAL",
+  route_pdi: "PUBLIC_DOMAIN_INTEL",
+  route_tech: "TECH_INFO",
+};
+
 // Never interpolate user input into ORDER BY — whitelist the exact SQL fragment per known key.
 const SORT: Record<NonNullable<IndexFilters["sort"]>, string> = {
   number: "number",
@@ -60,6 +96,20 @@ const SORT: Record<NonNullable<IndexFilters["sort"]>, string> = {
 // embedded in a LIKE param, and uppercase to match how CPC classes are stored.
 function sanitiseCpcPrefix(raw: string): string {
   return raw.replace(/[%_"]/g, "").toUpperCase();
+}
+
+// A sector ORs the same JSON-bracketed LIKE shape as CPC_EXISTS across every prefix in the
+// sector's list, in a single EXISTS. Prefixes come from the server-side SECTORS constant only
+// (never user input), but are still bound as params rather than interpolated.
+function sectorExists(key: SectorKey): { sql: string; params: string[] } {
+  const prefixes = SECTORS[key].prefixes;
+  const ors = prefixes.map(() => `f.value LIKE ?`).join(" OR ");
+  return {
+    sql: `EXISTS (SELECT 1 FROM asset a JOIN fact f ON f.asset_id = a.id
+                  WHERE a.external_id = patent_index.number AND f.key = 'cpc_classes'
+                    AND (${ors}))`,
+    params: prefixes.map((p) => `%"${p}%`),
+  };
 }
 
 // Build the shared WHERE clause + bound params from the filters (kept in one place so the
@@ -86,6 +136,21 @@ function where(f: IndexFilters): { sql: string; params: InArgs } {
   if (f.entityStatus) {
     const code = ENTITY_STATUS_CODE[f.entityStatus];
     if (code) { clauses.push(ENTITY_STATUS_EXISTS); params.push(code); }
+  }
+  if (f.sector && (SECTOR_KEYS as string[]).includes(f.sector)) {
+    const { sql, params: sectorParams } = sectorExists(f.sector);
+    clauses.push(sql);
+    params.push(...sectorParams);
+  }
+  if (f.lapseAge === "recent2") { clauses.push(EXP_RECENT_EXISTS(2)); }
+  if (f.lapseAge === "recent5") { clauses.push(EXP_RECENT_EXISTS(5)); }
+  if (f.lapseAge === "stale5") { clauses.push(`(${EXP_EXISTS} AND NOT ${EXP_RECENT_EXISTS(5)})`); }
+  if (f.analysis === "analyzed") { clauses.push(ANALYZED_EXISTS); }
+  if (f.analysis === "not_analyzed") { clauses.push(`NOT ${ANALYZED_EXISTS}`); }
+  if (f.analysis && Object.prototype.hasOwnProperty.call(ROUTE_LIKE, f.analysis)) {
+    const route = ROUTE_LIKE[f.analysis as keyof typeof ROUTE_LIKE];
+    clauses.push(ANALYZED_ROUTE_EXISTS);
+    params.push(`%"route":"${route}"%`);
   }
   return { sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params: params as InArgs };
 }
