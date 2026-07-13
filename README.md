@@ -17,11 +17,15 @@ No environment variables are needed. Your key is stored only in your browser
 ## Flow
 1. **Patents page** — the local catalogue loads instantly (offline, never 503s).
    Filter by keyword, assignee, grant-year range, CPC class, maintenance-fee status
-   (dormant / maintained), and USPTO entity status (large / small / micro), then sort
-   by patent number or grant year — all server-side over the whole ~35k-patent
-   catalogue, not just the visible page. Every filter, the sort, and the current page
-   round-trip through the URL, so **Search → open a patent → Back** always restores
-   exactly where you left off.
+   (dormant / maintained), USPTO entity status (large / small / micro), a human-friendly
+   **Sector** dropdown (Medicine, Computing, Communications, Electronics, Energy, Optics,
+   Chemistry, Mechanical, Transport — a curated CPC-prefix mapping), **Lapse age** (how
+   recently a maintenance fee lapsed: ≤2y "revival window" / ≤5y / 5+ years old), and
+   **Analysis** status (analyzed / not analyzed / by scoring route: License-Acquire,
+   Revival, Public-domain intel, Tech info), then sort by patent number or grant year —
+   all server-side over the whole ~35k-patent catalogue, not just the visible page.
+   Every filter, the sort, and the current page round-trip through the URL, so
+   **Search → open a patent → Back** always restores exactly where you left off.
 2. **Click a row** — the patent is pulled in from local facts and you land on its
    detail page automatically. Or select several rows' checkboxes and **Analyze
    selected** to batch-run up to 10 patents sequentially, with a per-row live SSE
@@ -67,7 +71,8 @@ provider stack trace.
   populated by the USPTO bulk loader below (~35k patents, titles/assignees/facts already
   filled). A small bundled seed is used if the loader hasn't run. Browsing never touches
   the network; filtering (keyword/assignee/year/CPC class/maintenance status/entity
-  status) and sorting are all SQLite, server-side, over the full catalogue.
+  status/sector/lapse age/analysis status & route) and sorting are all SQLite,
+  server-side, over the full catalogue.
 - **Facts** (immutable, sourced) come from the USPTO bulk data on load; for any patent
   outside the loaded subset, ingest falls back to a Google Patents page scrape.
 - **Gate 0 (transactability)** runs first, facts-only: is this asset even legally

@@ -2,13 +2,16 @@
 // Why: client component for the local patent catalogue browser. It calls the offline
 // /api/index endpoint (never touches the network), then lazily enriches un-titled rows via
 // /api/enrich in the background. A row click ingests the patent (/api/ingest → local facts)
-// and navigates to its verdict. Filters (keyword, assignee, grant-year range, dormant-only)
-// make the ~35k loaded catalogue easy to search. This file must NOT import anything from
-// @/lib/db or other server modules — all server work goes through fetch.
+// and navigates to its verdict. Filters (keyword, assignee, grant-year range, dormant-only,
+// sector, lapse recency, analysis status/route) make the ~35k loaded catalogue easy to
+// search. This file must NOT import anything from @/lib/db or other server modules — all
+// server work goes through fetch. `@/lib/index/sectors` is fine to import: dependency-free
+// plain constants, never touches the database.
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import BatchAnalyzePanel from "./BatchAnalyzePanel";
+import { SECTORS, SECTOR_KEYS } from "@/lib/index/sectors";
 
 // Selection cap for a batch run — sequential SSE analysis of more than this gets slow and starts
 // pushing into per-provider rate limits (see BatchAnalyzePanel).
@@ -29,11 +32,16 @@ type IndexResult = { total: number; rows: IndexRow[] };
 type Filters = {
   q: string; assignee: string; yearAfter: string; yearBefore: string;
   cpc: string; entityStatus: "" | "large" | "small" | "micro"; status: "" | "lapsed" | "maintained";
+  sector: "" | keyof typeof SECTORS;
+  lapseAge: "" | "recent2" | "recent5" | "stale5";
+  analysis: "" | "analyzed" | "not_analyzed" | "route_license" | "route_revival" | "route_pdi" | "route_tech";
   sort: "number" | "year_desc" | "year_asc";
 };
 const INITIAL: Filters = {
   q: "", assignee: "", yearAfter: "", yearBefore: "",
-  cpc: "", entityStatus: "", status: "", sort: "number",
+  cpc: "", entityStatus: "", status: "",
+  sector: "", lapseAge: "", analysis: "",
+  sort: "number",
 };
 
 const PAGE_SIZE = 25; // server-fixed; keep in sync for the "Showing X–Y" display
@@ -47,6 +55,9 @@ function buildQS(f: Filters, page: number): string {
   if (f.cpc.trim()) p.set("cpc", f.cpc.trim());
   if (f.entityStatus) p.set("entityStatus", f.entityStatus);
   if (f.status) p.set("status", f.status);
+  if (f.sector) p.set("sector", f.sector);
+  if (f.lapseAge) p.set("lapseAge", f.lapseAge);
+  if (f.analysis) p.set("analysis", f.analysis);
   if (f.sort !== "number") p.set("sort", f.sort);
   p.set("page", String(page));
   return p.toString();
@@ -54,6 +65,11 @@ function buildQS(f: Filters, page: number): string {
 
 const ENTITY_STATUS_VALUES = new Set(["large", "small", "micro"]);
 const STATUS_VALUES = new Set(["lapsed", "maintained"]);
+const SECTOR_VALUES = new Set<string>(SECTOR_KEYS);
+const LAPSE_AGE_VALUES = new Set(["recent2", "recent5", "stale5"]);
+const ANALYSIS_VALUES = new Set([
+  "analyzed", "not_analyzed", "route_license", "route_revival", "route_pdi", "route_tech",
+]);
 const SORT_VALUES = new Set(["number", "year_desc", "year_asc"]);
 
 // Inverse of buildQS: parse a URL's query params back into { filters, page }, falling back to
@@ -62,6 +78,9 @@ const SORT_VALUES = new Set(["number", "year_desc", "year_asc"]);
 function filtersFromParams(sp: URLSearchParams): { filters: Filters; page: number } {
   const entityStatus = sp.get("entityStatus") ?? "";
   const status = sp.get("status") ?? "";
+  const sector = sp.get("sector") ?? "";
+  const lapseAge = sp.get("lapseAge") ?? "";
+  const analysis = sp.get("analysis") ?? "";
   const sort = sp.get("sort") ?? "number";
   const filters: Filters = {
     q: sp.get("q") ?? "",
@@ -71,6 +90,9 @@ function filtersFromParams(sp: URLSearchParams): { filters: Filters; page: numbe
     cpc: sp.get("cpc") ?? "",
     entityStatus: ENTITY_STATUS_VALUES.has(entityStatus) ? (entityStatus as Filters["entityStatus"]) : "",
     status: STATUS_VALUES.has(status) ? (status as Filters["status"]) : "",
+    sector: SECTOR_VALUES.has(sector) ? (sector as Filters["sector"]) : "",
+    lapseAge: LAPSE_AGE_VALUES.has(lapseAge) ? (lapseAge as Filters["lapseAge"]) : "",
+    analysis: ANALYSIS_VALUES.has(analysis) ? (analysis as Filters["analysis"]) : "",
     sort: SORT_VALUES.has(sort) ? (sort as Filters["sort"]) : "number",
   };
   const rawPage = sp.get("page");
@@ -380,6 +402,44 @@ export default function PatentSearch() {
               <option value="number">Patent number</option>
               <option value="year_desc">Newest first</option>
               <option value="year_asc">Oldest first</option>
+            </select>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <div className="w-52">
+            <label className="mb-1 block text-xs font-semibold text-muted">Sector</label>
+            <select value={pending.sector}
+              onChange={(e) => setPending((f) => ({ ...f, sector: e.target.value as Filters["sector"] }))}
+              className={INPUT}>
+              <option value="">Any sector</option>
+              {SECTOR_KEYS.map((key) => (
+                <option key={key} value={key}>{SECTORS[key].label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="w-52">
+            <label className="mb-1 block text-xs font-semibold text-muted">Lapse age</label>
+            <select value={pending.lapseAge}
+              onChange={(e) => setPending((f) => ({ ...f, lapseAge: e.target.value as Filters["lapseAge"] }))}
+              className={INPUT}>
+              <option value="">Any</option>
+              <option value="recent2">≤ 2 years (revival window)</option>
+              <option value="recent5">≤ 5 years</option>
+              <option value="stale5">5+ years old</option>
+            </select>
+          </div>
+          <div className="w-56">
+            <label className="mb-1 block text-xs font-semibold text-muted">Analysis</label>
+            <select value={pending.analysis}
+              onChange={(e) => setPending((f) => ({ ...f, analysis: e.target.value as Filters["analysis"] }))}
+              className={INPUT}>
+              <option value="">Any</option>
+              <option value="analyzed">Analyzed</option>
+              <option value="not_analyzed">Not analyzed</option>
+              <option value="route_license">Route: License-Acquire</option>
+              <option value="route_revival">Route: Revival</option>
+              <option value="route_pdi">Route: Public-domain intel</option>
+              <option value="route_tech">Route: Tech info</option>
             </select>
           </div>
         </div>

@@ -50,6 +50,9 @@ export async function ensureSchema(db: Client): Promise<void> {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_event_type ON event_log(event_type);
+    -- Supports the analysis-status/route catalogue filter (Task 14): correlates event_log back
+    -- to asset_id, e.g. "any score_computed event for this asset".
+    CREATE INDEX IF NOT EXISTS idx_event_asset ON event_log(asset_id);
 
     -- patent_index: the BROWSABLE catalogue that backs the Patents table. It is seeded
     -- offline from a bundled list of real US patent numbers so the table is never empty
