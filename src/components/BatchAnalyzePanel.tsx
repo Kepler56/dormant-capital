@@ -66,38 +66,50 @@ export default function BatchAnalyzePanel({ numbers, onClose }: { numbers: strin
     setFinished(false);
     const llmConfig = toLLMConfig(selected);
 
-    for (const num of numbers) {
-      if (stopRef.current) break; // Stop was pressed — the prior item finished; don't start the next.
+    // The queue runs inside try/finally so running/finished ALWAYS settle, and each phase in
+    // the loop catches its own failures: one patent's thrown rejection (dropped connection,
+    // transient network error — realistic over a long sequential run) must mark THAT row as
+    // error and let the queue continue, never kill the loop and freeze the panel on "Stop".
+    try {
+      for (const num of numbers) {
+        if (stopRef.current) break; // Stop was pressed — the prior item finished; don't start the next.
 
-      updateRow(num, { kind: "ingesting" });
-      let assetId: number;
-      try {
-        const res = await fetch("/api/ingest", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ numbers: [num] }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const first = data?.results?.[0];
-        if (!first?.ok || !first?.assetId) throw new Error(first?.error ?? "Could not ingest this patent");
-        assetId = first.assetId as number;
-      } catch (e) {
-        updateRow(num, { kind: "error", message: (e as Error).message });
-        continue;
+        updateRow(num, { kind: "ingesting" });
+        let assetId: number;
+        try {
+          const res = await fetch("/api/ingest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ numbers: [num] }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          const first = data?.results?.[0];
+          if (!first?.ok || !first?.assetId) throw new Error(first?.error ?? "Could not ingest this patent");
+          assetId = first.assetId as number;
+        } catch (e) {
+          updateRow(num, { kind: "error", message: (e as Error).message });
+          continue;
+        }
+
+        updateRow(num, { kind: "analyzing", label: "Starting…" });
+        try {
+          const result = await streamAnalyze(
+            { assetId, num, llmConfig },
+            (ev) => updateRow(num, { kind: "analyzing", label: ev.label })
+          );
+          if (result.ok) updateRow(num, { kind: "done", assetId });
+          else updateRow(num, { kind: "error", message: result.error ?? "Analysis failed" });
+        } catch (e) {
+          // streamAnalyze resolves error FRAMES to { ok:false }; this catch is for the fetch or
+          // stream reader throwing outright (e.g. the connection dropping mid-stream).
+          updateRow(num, { kind: "error", message: (e as Error).message || "Analysis failed" });
+        }
       }
-
-      updateRow(num, { kind: "analyzing", label: "Starting…" });
-      const result = await streamAnalyze(
-        { assetId, num, llmConfig },
-        (ev) => updateRow(num, { kind: "analyzing", label: ev.label })
-      );
-      if (result.ok) updateRow(num, { kind: "done", assetId });
-      else updateRow(num, { kind: "error", message: result.error ?? "Analysis failed" });
+    } finally {
+      setRunning(false);
+      setFinished(true);
     }
-
-    setRunning(false);
-    setFinished(true);
   }
 
   function stop() {

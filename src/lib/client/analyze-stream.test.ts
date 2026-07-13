@@ -115,4 +115,32 @@ describe("streamAnalyze", () => {
     const result = await streamAnalyze(body, () => {});
     expect(result).toEqual({ ok: false, error: "No stream" });
   });
+
+  // The next two document the REJECTION contract: streamAnalyze deliberately does not swallow
+  // transport failures into { ok:false } — a fetch rejection or a stream that dies mid-read
+  // propagates to the caller. BatchAnalyzePanel relies on this by wrapping each patent's
+  // streamAnalyze call in try/catch so one thrown failure marks that row and the queue continues.
+  it("propagates a fetch rejection (network failure before any response)", async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValue(new TypeError("Failed to fetch"));
+    await expect(streamAnalyze(body, () => {})).rejects.toThrow("Failed to fetch");
+  });
+
+  it("propagates a stream reader error (connection dropped mid-stream), after earlier traces were delivered", async () => {
+    const e1: TraceEvent = { step: "plan", label: "Planning", status: "start" };
+    const enc = new TextEncoder();
+    // pull-based: first read delivers the trace frame, second read fails — enqueue+error inside
+    // start() races through Response's body conversion and can drop the chunk before delivery.
+    let pulls = 0;
+    const stream = new ReadableStream({
+      pull(controller) {
+        pulls += 1;
+        if (pulls === 1) controller.enqueue(enc.encode(frame({ type: "trace", event: e1 })));
+        else controller.error(new Error("network dropped"));
+      },
+    });
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(new Response(stream));
+    const seen: TraceEvent[] = [];
+    await expect(streamAnalyze(body, (e) => seen.push(e))).rejects.toThrow("network dropped");
+    expect(seen).toEqual([e1]); // traces received before the drop were still forwarded
+  });
 });
