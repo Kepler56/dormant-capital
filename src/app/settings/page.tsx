@@ -48,9 +48,11 @@ export default function SettingsPage() {
           </span>
           <h2 className="mt-3 font-display text-xl font-bold text-ink">Bring your own model</h2>
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink-soft">
-            Every analysis — reasoning and web search — runs on your own provider and key. Pick
-            OpenAI, Anthropic or Gemini, paste your key, and you&apos;re ready. Nothing runs on a
-            shared server model, and your key never leaves this browser except with each analysis.
+            Every analysis — reasoning and web search — runs on your own provider and key. Save as
+            many named engine profiles as you like across OpenAI, Anthropic and Gemini, then pick
+            which one runs each analysis — handy for comparing how different models score the same
+            patent. Nothing runs on a shared server model, and keys never leave this browser except
+            with each analysis.
           </p>
         </div>
         <div className="px-6 py-6 sm:px-8">

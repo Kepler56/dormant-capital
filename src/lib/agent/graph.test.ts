@@ -60,6 +60,20 @@ describe("agent graph", () => {
     expect(final.iteration).toBeLessThanOrEqual(2);
     expect(final.result).toBeDefined();
   });
+
+  it("Gate 0 'no' (full-term expiry) short-circuits before opp/exec spend, even though the dormancy gate alone would pass", async () => {
+    // filed 2000-01-01 + 20y term expired 2020 — well in the past regardless of "today".
+    // Maintenance is ALSO lapsed, so the plain dormancy gate would pass (hero signal), but
+    // Gate 0 must win: full-term expiry means there is no exclusivity left to sell.
+    const expired = patent({ patentNumber: "US-EXPIRED", filingDate: "2000-01-01", grantDate: "2002-01-01", maintenanceLapsed: true, anticipatedExpiration: false });
+    const { events, final } = await drain(runGraph({ assetId: 4, num: "US-EXPIRED", patent: expired }, fakeDeps()));
+    expect(final.result?.route).toBe("PUBLIC_DOMAIN_INTEL");
+    expect(final.result?.passedGate).toBe(false);
+    expect(final.result?.band).toBe("PASS");
+    expect(final.oppExec).toBeUndefined(); // extract_oppexec was skipped entirely
+    expect(final.shadow).toBeUndefined(); // shadow only runs when the gate passed
+    expect((events as import("./state").TraceEvent[]).some((e) => e.label.includes("Gate 0"))).toBe(true);
+  });
 });
 
 describe("defaultDeps", () => {

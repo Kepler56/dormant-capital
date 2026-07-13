@@ -30,9 +30,75 @@ export const SIGNAL_LABELS = {
 } as const;
 
 export function verdictFor(s: ScoreResult): Verdict {
-  // Gate failed → the patent is still alive. This is a confident, reassuring "not a fit",
-  // not a failure — it protects the buyer from wasting time on a maintained asset.
+  // Gate failed → not passed straight through to composite scoring. Older payloads (before
+  // Gate 0 existed) have no `route` field at all, so every branch below is guarded on it —
+  // when absent, execution falls straight through to the original "still active" case,
+  // unchanged.
   if (!s.passedGate) {
+    // Gate 0 short-circuit: full-term expiry. This is NOT a dead end — the technology has
+    // no exclusivity left to sell, but it is still a candidate for a tech-intelligence
+    // product. Saying "still active" here would be the opposite of reality.
+    if (s.route === "PUBLIC_DOMAIN_INTEL") {
+      return {
+        label: "Public-domain intel",
+        tone: "watch",
+        headline: "Public domain — no exclusivity to sell; candidate for technology-intelligence product.",
+        blurb:
+          "This patent has reached its full term, so there is no exclusivity left to license or sell. The underlying technology can still be packaged as a freely-usable tech-scouting or intelligence product.",
+        action: "Package as technology intelligence rather than routing as an acquisition.",
+        ringValue: s.dormancy,
+        ringLabel: "Dormancy signal",
+      };
+    }
+    // Gate 0 short-circuit: application that never granted. No enforceable rights exist,
+    // so there is nothing to license or acquire — but the disclosure itself can still be
+    // useful as reference material.
+    if (s.route === "TECH_INFO") {
+      return {
+        label: "Technical info only",
+        tone: "idle",
+        headline: "Application without subsisting rights — technical information only.",
+        blurb:
+          "This application never granted, so there are no enforceable rights to license or acquire. It may still be useful as prior-art or technical reference material.",
+        action: "No acquisition action — treat as reference material only, not a sellable asset.",
+        ringValue: s.dormancy,
+        ringLabel: "Dormancy signal",
+      };
+    }
+    // REVIVAL that FAILED the dormancy gate: a fee lapse IS on record (that's what forced
+    // the route), so "still being maintained" would contradict the gate0 reasons shown
+    // right below. What actually happened: residual signals (litigation, a live product,
+    // ongoing development) pulled dormancy under the floor — the asset looks contested or
+    // in play, not walked away from.
+    if (s.route === "REVIVAL") {
+      return {
+        label: "Lapsed, not dormant",
+        tone: "watch",
+        headline:
+          "Fee lapse on record, but dormancy is not confirmed — signals suggest the asset is still contested or in play.",
+        blurb:
+          "A maintenance-fee lapse exists, yet other signals — litigation, a live product or ongoing development — indicate the owner hasn't truly walked away. The reasons below spell out exactly what pulled the dormancy call under.",
+        action: "Review the reasons list before acting; revisit if the conflicting activity dies down.",
+        ringValue: s.dormancy,
+        ringLabel: "Dormancy signal",
+      };
+    }
+    // Gate 0 couldn't classify legal status from the facts on hand (still "conditional" —
+    // not ruled out, just unverified). A cautious variant, distinct from "still active".
+    if (s.route === "UNKNOWN" && s.gate0?.transactable === "conditional") {
+      return {
+        label: "Status unverified",
+        tone: "watch",
+        headline: "Legal status unverified — not enough dated facts to classify.",
+        blurb:
+          "We don't have enough dated facts (filing, grant or expiry) to determine this asset's legal status with confidence. Any route here is provisional until it's verified.",
+        action: "Gather the missing filing/grant/expiry facts before making a transaction decision.",
+        ringValue: s.dormancy,
+        ringLabel: "Dormancy signal",
+      };
+    }
+    // Default (LICENSE_OR_ACQUIRE that isn't dormant, and pre-Gate-0 payloads with no
+    // `route` at all): still active.
     return {
       label: "Still active",
       tone: "idle",

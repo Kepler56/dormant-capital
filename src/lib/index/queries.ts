@@ -18,7 +18,11 @@ export type IndexFilters = {
   assignee?: string;   // matches assignee specifically
   yearAfter?: number;  // grant_year >= yearAfter
   yearBefore?: number; // grant_year <= yearBefore
-  dormantOnly?: boolean; // only patents with a derived maintenance-fee lapse (dormant)
+  dormantOnly?: boolean; // legacy: only patents with a derived maintenance-fee lapse (dormant)
+  cpc?: string;         // CPC class prefix, e.g. "H01L" (sanitised before use)
+  entityStatus?: "large" | "small" | "micro"; // USPTO fee entity size
+  status?: "lapsed" | "maintained"; // maintenance-fee status (supersedes dormantOnly)
+  sort?: "number" | "year_desc" | "year_asc";
   page?: number;       // 0-based
   pageSize?: number;
 };
@@ -29,6 +33,34 @@ const DORMANT_EXISTS =
   `EXISTS (SELECT 1 FROM asset a JOIN fact f ON f.asset_id = a.id
            WHERE a.external_id = patent_index.number
              AND f.key = 'maintenance_lapsed' AND f.value = 'true')`;
+
+// CPC class facts are JSON-encoded string arrays, e.g. '["H01L21/02"]'. Correlated EXISTS avoids
+// a JSON1 dependency: LIKE on the raw JSON text, bracketed by the opening quote so "H01L" never
+// matches an unrelated class that merely contains the same letters mid-string.
+const CPC_EXISTS =
+  `EXISTS (SELECT 1 FROM asset a JOIN fact f ON f.asset_id = a.id
+           WHERE a.external_id = patent_index.number
+             AND f.key = 'cpc_classes' AND f.value LIKE ?)`;
+
+// Entity status ("large"/"small"/"micro" in the UI) maps to the USPTO fee-schedule codes stored
+// verbatim on maintenance_event rows.
+const ENTITY_STATUS_CODE: Record<"large" | "small" | "micro", string> = { large: "N", small: "Y", micro: "M" };
+const ENTITY_STATUS_EXISTS =
+  `EXISTS (SELECT 1 FROM maintenance_event me
+           WHERE me.patent_number = patent_index.number AND me.entity_status = ?)`;
+
+// Never interpolate user input into ORDER BY — whitelist the exact SQL fragment per known key.
+const SORT: Record<NonNullable<IndexFilters["sort"]>, string> = {
+  number: "number",
+  year_desc: "grant_year DESC, number",
+  year_asc: "grant_year ASC, number",
+};
+
+// Strip characters that are meaningful to LIKE/JSON matching (`%`, `_`, `"`) before the prefix is
+// embedded in a LIKE param, and uppercase to match how CPC classes are stored.
+function sanitiseCpcPrefix(raw: string): string {
+  return raw.replace(/[%_"]/g, "").toUpperCase();
+}
 
 // Build the shared WHERE clause + bound params from the filters (kept in one place so the
 // count query and the page query can never drift apart).
@@ -45,6 +77,16 @@ function where(f: IndexFilters): { sql: string; params: InArgs } {
   if (f.yearAfter) { clauses.push("grant_year >= ?"); params.push(f.yearAfter); }
   if (f.yearBefore) { clauses.push("grant_year <= ?"); params.push(f.yearBefore); }
   if (f.dormantOnly) { clauses.push(DORMANT_EXISTS); }
+  if (f.status === "lapsed") { clauses.push(DORMANT_EXISTS); }
+  if (f.status === "maintained") { clauses.push(`NOT ${DORMANT_EXISTS}`); }
+  if (f.cpc) {
+    const prefix = sanitiseCpcPrefix(f.cpc);
+    if (prefix) { clauses.push(CPC_EXISTS); params.push(`%"${prefix}%`); }
+  }
+  if (f.entityStatus) {
+    const code = ENTITY_STATUS_CODE[f.entityStatus];
+    if (code) { clauses.push(ENTITY_STATUS_EXISTS); params.push(code); }
+  }
   return { sql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params: params as InArgs };
 }
 
@@ -54,10 +96,11 @@ export async function searchLocalIndex(f: IndexFilters): Promise<{ total: number
   const total = Number(totalRow?.n ?? 0);
   const pageSize = Math.min(f.pageSize ?? 25, 100);
   const offset = Math.max(0, f.page ?? 0) * pageSize;
-  // Un-enriched-but-newer patents first is unhelpful; order by number so paging is stable.
+  // Default order (by number) keeps paging stable; year_desc/year_asc are opt-in via `sort`.
+  const orderBy = SORT[f.sort ?? "number"] ?? SORT.number;
   const rows = await all<IndexRow>(
     `SELECT number, grant_year, title, assignee, enriched FROM patent_index
-     ${sql} ORDER BY number LIMIT ? OFFSET ?`,
+     ${sql} ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
     [...(params as unknown[]), pageSize, offset] as InArgs
   );
   return { total, rows };

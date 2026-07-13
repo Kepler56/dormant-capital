@@ -27,6 +27,14 @@ export async function listAssets(): Promise<{ id: number; external_id: string; c
   return all(`SELECT id, external_id, created_at FROM asset ORDER BY id DESC`);
 }
 
+// Existence check by internal numeric id. libSQL does not enforce the asset FK on child tables
+// (e.g. outcome), so routes that write child rows off a client-supplied id must check this
+// themselves first, or a bad id creates a permanent dangling row instead of a clean 404.
+export async function assetExists(id: number): Promise<boolean> {
+  const row = await get<{ id: number }>(`SELECT id FROM asset WHERE id=?`, [id]);
+  return row !== undefined;
+}
+
 export async function insertFact(assetId: number, f: NewFact): Promise<void> {
   await run(
     `INSERT INTO fact (asset_id, key, value, source, source_url, retrieved_at)

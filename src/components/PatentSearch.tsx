@@ -7,7 +7,12 @@
 // @/lib/db or other server modules — all server work goes through fetch.
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import BatchAnalyzePanel from "./BatchAnalyzePanel";
+
+// Selection cap for a batch run — sequential SSE analysis of more than this gets slow and starts
+// pushing into per-provider rate limits (see BatchAnalyzePanel).
+const MAX_BATCH = 10;
 
 // ─── Catalogue types (mirrors /api/index response) ───────────────────────────
 type IndexRow = {
@@ -21,8 +26,15 @@ type IndexRow = {
 type IndexResult = { total: number; rows: IndexRow[] };
 
 // ─── Filter state ─────────────────────────────────────────────────────────────
-type Filters = { q: string; assignee: string; yearAfter: string; yearBefore: string; dormantOnly: boolean };
-const INITIAL: Filters = { q: "", assignee: "", yearAfter: "", yearBefore: "", dormantOnly: false };
+type Filters = {
+  q: string; assignee: string; yearAfter: string; yearBefore: string;
+  cpc: string; entityStatus: "" | "large" | "small" | "micro"; status: "" | "lapsed" | "maintained";
+  sort: "number" | "year_desc" | "year_asc";
+};
+const INITIAL: Filters = {
+  q: "", assignee: "", yearAfter: "", yearBefore: "",
+  cpc: "", entityStatus: "", status: "", sort: "number",
+};
 
 const PAGE_SIZE = 25; // server-fixed; keep in sync for the "Showing X–Y" display
 
@@ -32,9 +44,39 @@ function buildQS(f: Filters, page: number): string {
   if (f.assignee.trim()) p.set("assignee", f.assignee.trim());
   if (f.yearAfter.trim()) p.set("yearAfter", f.yearAfter.trim());
   if (f.yearBefore.trim()) p.set("yearBefore", f.yearBefore.trim());
-  if (f.dormantOnly) p.set("dormantOnly", "1");
+  if (f.cpc.trim()) p.set("cpc", f.cpc.trim());
+  if (f.entityStatus) p.set("entityStatus", f.entityStatus);
+  if (f.status) p.set("status", f.status);
+  if (f.sort !== "number") p.set("sort", f.sort);
   p.set("page", String(page));
   return p.toString();
+}
+
+const ENTITY_STATUS_VALUES = new Set(["large", "small", "micro"]);
+const STATUS_VALUES = new Set(["lapsed", "maintained"]);
+const SORT_VALUES = new Set(["number", "year_desc", "year_asc"]);
+
+// Inverse of buildQS: parse a URL's query params back into { filters, page }, falling back to
+// INITIAL/0 for anything missing or invalid (bogus enum values, non-numeric page). One
+// vocabulary shared by fetch and address bar, so the URL is always a faithful round-trip.
+function filtersFromParams(sp: URLSearchParams): { filters: Filters; page: number } {
+  const entityStatus = sp.get("entityStatus") ?? "";
+  const status = sp.get("status") ?? "";
+  const sort = sp.get("sort") ?? "number";
+  const filters: Filters = {
+    q: sp.get("q") ?? "",
+    assignee: sp.get("assignee") ?? "",
+    yearAfter: sp.get("yearAfter") ?? "",
+    yearBefore: sp.get("yearBefore") ?? "",
+    cpc: sp.get("cpc") ?? "",
+    entityStatus: ENTITY_STATUS_VALUES.has(entityStatus) ? (entityStatus as Filters["entityStatus"]) : "",
+    status: STATUS_VALUES.has(status) ? (status as Filters["status"]) : "",
+    sort: SORT_VALUES.has(sort) ? (sort as Filters["sort"]) : "number",
+  };
+  const rawPage = sp.get("page");
+  const parsedPage = rawPage === null ? 0 : Number.parseInt(rawPage, 10);
+  const page = Number.isInteger(parsedPage) && parsedPage >= 0 ? parsedPage : 0;
+  return { filters, page };
 }
 
 const INPUT =
@@ -43,11 +85,26 @@ const INPUT =
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function PatentSearch() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // Seeds first paint from the URL present at mount. NOT the only entry path any more: the
+  // App Router does not remount this component for same-segment navigation (e.g. the sidebar
+  // "Patents" link while already on a filtered /patents?...), and Back/Forward between two
+  // /patents?... history entries only changes searchParams — neither remounts us. The effect
+  // below watches searchParams for exactly that case and resyncs filters/pending/page/table.
+  const [initial] = useState(() => filtersFromParams(searchParams));
+
+  // Canonical query string (via buildQS) that THIS component itself last wrote to the URL,
+  // updated at every router.replace() call below. The searchParams-watching effect compares
+  // the incoming params against this ref to tell "we navigated here from outside" (sidebar
+  // link, Back/Forward) apart from our own write echoing back through useSearchParams().
+  const lastSelfWrittenQS = useRef(buildQS(initial.filters, initial.page));
 
   // `filters` is what the current results reflect; `pending` is the in-progress form.
-  const [filters, setFilters] = useState<Filters>(INITIAL);
-  const [pending, setPending] = useState<Filters>(INITIAL);
-  const [page, setPage] = useState(0);
+  const [filters, setFilters] = useState<Filters>(initial.filters);
+  const [pending, setPending] = useState<Filters>(initial.filters);
+  const [page, setPage] = useState(initial.page);
   const [result, setResult] = useState<IndexResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +118,11 @@ export default function PatentSearch() {
 
   // Per-row ingest state: patent number → "loading" | "error" | null.
   const [rowState, setRowState] = useState<Record<string, "loading" | "error" | null>>({});
+
+  // Batch selection: patent numbers checked for a multi-patent analyze run. Persists across
+  // pagination/filter changes so a user can build a batch while browsing several result pages.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchOpen, setBatchOpen] = useState(false);
 
   // ── Catalogue fetch ────────────────────────────────────────────────────────
   const run = useCallback(async (f: Filters, p: number) => {
@@ -80,7 +142,29 @@ export default function PatentSearch() {
     }
   }, []);
 
-  useEffect(() => { run(INITIAL, 0); }, [run]);
+  // Fetch once on mount using the filters/page parsed from the URL (or INITIAL/0 if bare).
+  // `initial` is stable for the lifetime of this component instance (see useState above), so
+  // this effect fires exactly once for the mount fetch — external navigation is handled below.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { run(initial.filters, initial.page); }, [run]);
+
+  // Resync on external navigation: same-segment nav (e.g. clicking the sidebar "Patents" link
+  // while already on a filtered /patents?...) and Back/Forward between two /patents?... history
+  // entries both change searchParams without remounting this component. When the incoming params
+  // canonicalize to something other than the last query string we ourselves wrote, treat it as
+  // external and re-parse/re-run; when they match, it's our own router.replace() echoing back, so
+  // skip it to avoid double-fetching our own searches.
+  useEffect(() => {
+    const parsed = filtersFromParams(searchParams);
+    const canonical = buildQS(parsed.filters, parsed.page);
+    if (canonical === lastSelfWrittenQS.current) return;
+    lastSelfWrittenQS.current = canonical;
+    setFilters(parsed.filters);
+    setPending(parsed.filters);
+    setPage(parsed.page);
+    run(parsed.filters, parsed.page);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // ── Lazy enrich: after a page renders, POST the unenriched numbers ───────────
   useEffect(() => {
@@ -135,21 +219,69 @@ export default function PatentSearch() {
     }
   }
 
+  // ── Selection (batch analyze) ────────────────────────────────────────────────
+  function toggleRow(num: string, checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        if (next.size >= MAX_BATCH) return prev; // at cap — ignore further checks
+        next.add(num);
+      } else {
+        next.delete(num);
+      }
+      return next;
+    });
+  }
+  function toggleAllOnPage() {
+    const pageNums = rows.map((r) => r.number);
+    const allSelected = pageNums.length > 0 && pageNums.every((n) => selected.has(n));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const n of pageNums) next.delete(n);
+      } else {
+        for (const n of pageNums) {
+          if (next.size >= MAX_BATCH) break;
+          next.add(n);
+        }
+      }
+      return next;
+    });
+  }
+
   // ── Event handlers ───────────────────────────────────────────────────────────
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     setFilters(pending);
     setPage(0);
     run(pending, 0);
+    lastSelfWrittenQS.current = buildQS(pending, 0);
+    router.replace(`${pathname}?${buildQS(pending, 0)}`, { scroll: false });
   }
   function handleReset() {
     setPending(INITIAL);
     setFilters(INITIAL);
     setPage(0);
     run(INITIAL, 0);
+    // Written bare (no query string), but that URL parses back to INITIAL/0 — same canonical
+    // form recorded here — so the searchParams watcher recognizes this as our own write.
+    lastSelfWrittenQS.current = buildQS(INITIAL, 0);
+    router.replace(pathname, { scroll: false });
   }
-  function prev() { const p = Math.max(0, page - 1); setPage(p); run(filters, p); }
-  function next() { const p = page + 1; setPage(p); run(filters, p); }
+  function prev() {
+    const p = Math.max(0, page - 1);
+    setPage(p);
+    run(filters, p);
+    lastSelfWrittenQS.current = buildQS(filters, p);
+    router.replace(`${pathname}?${buildQS(filters, p)}`, { scroll: false });
+  }
+  function next() {
+    const p = page + 1;
+    setPage(p);
+    run(filters, p);
+    lastSelfWrittenQS.current = buildQS(filters, p);
+    router.replace(`${pathname}?${buildQS(filters, p)}`, { scroll: false });
+  }
 
   function showingLabel(total: number, p: number, rowCount: number): string {
     const from = p * PAGE_SIZE + 1;
@@ -212,14 +344,46 @@ export default function PatentSearch() {
             <input type="number" value={pending.yearBefore} onChange={(e) => setPending((f) => ({ ...f, yearBefore: e.target.value }))}
               placeholder="2005" min={1900} max={2100} className={INPUT} />
           </div>
+          <div className="w-32">
+            <label className="mb-1 block text-xs font-semibold text-muted">CPC class</label>
+            <input type="text" value={pending.cpc} onChange={(e) => setPending((f) => ({ ...f, cpc: e.target.value }))}
+              placeholder="e.g. H01L" className={INPUT} />
+          </div>
         </div>
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink-soft">
-            <input type="checkbox" checked={pending.dormantOnly}
-              onChange={(e) => setPending((f) => ({ ...f, dormantOnly: e.target.checked }))}
-              className="h-4 w-4 rounded border-line text-action focus:ring-action-soft" />
-            Dormant only <span className="text-xs text-muted">(maintenance-fee lapsed)</span>
-          </label>
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <div className="w-44">
+            <label className="mb-1 block text-xs font-semibold text-muted">Status</label>
+            <select value={pending.status}
+              onChange={(e) => setPending((f) => ({ ...f, status: e.target.value as Filters["status"] }))}
+              className={INPUT}>
+              <option value="">Any status</option>
+              <option value="lapsed">Dormant — fee lapsed</option>
+              <option value="maintained">Maintained</option>
+            </select>
+          </div>
+          <div className="w-40">
+            <label className="mb-1 block text-xs font-semibold text-muted">Entity status</label>
+            <select value={pending.entityStatus}
+              onChange={(e) => setPending((f) => ({ ...f, entityStatus: e.target.value as Filters["entityStatus"] }))}
+              className={INPUT}>
+              <option value="">Any</option>
+              <option value="large">Large entity</option>
+              <option value="small">Small entity</option>
+              <option value="micro">Micro entity</option>
+            </select>
+          </div>
+          <div className="w-44">
+            <label className="mb-1 block text-xs font-semibold text-muted">Sort</label>
+            <select value={pending.sort}
+              onChange={(e) => setPending((f) => ({ ...f, sort: e.target.value as Filters["sort"] }))}
+              className={INPUT}>
+              <option value="number">Patent number</option>
+              <option value="year_desc">Newest first</option>
+              <option value="year_asc">Oldest first</option>
+            </select>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
           <div className="flex items-center gap-3">
             <button type="button" onClick={handleReset}
               className="text-sm font-medium text-muted underline underline-offset-2 hover:text-ink">Reset</button>
@@ -233,6 +397,32 @@ export default function PatentSearch() {
 
       {error && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{error}</div>
+      )}
+
+      {/* Batch selection bar — appears once at least one row is checked */}
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3 shadow-soft">
+          <span className="text-sm text-ink-soft">
+            <span className="font-semibold text-ink">{selected.size}</span> selected
+            <span className="ml-2 text-xs text-muted">(max {MAX_BATCH} per batch)</span>
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="text-sm font-medium text-muted underline underline-offset-2 hover:text-ink"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => setBatchOpen(true)}
+              className="rounded-lg bg-action px-4 py-2 text-sm font-semibold text-white transition hover:bg-action-dark"
+            >
+              Analyze selected
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Table card */}
@@ -257,6 +447,15 @@ export default function PatentSearch() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-line bg-canvas/60 text-left text-xs uppercase tracking-wide text-muted">
+                      <th className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={rows.length > 0 && rows.every((r) => selected.has(r.number))}
+                          onChange={toggleAllOnPage}
+                          aria-label="Select all rows on this page"
+                          className="h-4 w-4 accent-action"
+                        />
+                      </th>
                       <th className="px-4 py-3 font-semibold">Patent</th>
                       <th className="px-4 py-3 font-semibold">Title</th>
                       <th className="px-4 py-3 font-semibold">Assignee</th>
@@ -268,6 +467,16 @@ export default function PatentSearch() {
                     {rows.map((row) => (
                       <tr key={row.number} className="cursor-pointer transition hover:bg-brand-soft/40"
                         onClick={() => handleRowClick(row.number)}>
+                        <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selected.has(row.number)}
+                            onChange={(e) => toggleRow(row.number, e.target.checked)}
+                            disabled={!selected.has(row.number) && selected.size >= MAX_BATCH}
+                            aria-label={`Select ${row.number}`}
+                            className="h-4 w-4 accent-action disabled:cursor-not-allowed disabled:opacity-40"
+                          />
+                        </td>
                         <td className="whitespace-nowrap px-4 py-3.5 font-mono text-xs text-ink-soft">{row.number}</td>
                         <td className="max-w-sm px-4 py-3.5 text-ink"><div className="truncate">{resolvedTitle(row)}</div></td>
                         <td className="max-w-[200px] truncate px-4 py-3.5 text-ink-soft">{resolvedAssignee(row)}</td>
@@ -299,6 +508,10 @@ export default function PatentSearch() {
             </div>
           )}
         </div>
+      )}
+
+      {batchOpen && selected.size > 0 && (
+        <BatchAnalyzePanel numbers={Array.from(selected)} onClose={() => setBatchOpen(false)} />
       )}
     </div>
   );

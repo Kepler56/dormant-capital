@@ -7,23 +7,38 @@ import { config, SCORING_VERSION } from "./config";
 import { dormancyGate } from "./gate";
 import { opportunityScore } from "./opportunity";
 import { executionScore } from "./execution";
+import { runGate0 } from "./gate0";
+import type { Gate0Result, RouteType } from "./gate0";
 import type { DormancyResidual, OppExecEvidence, ParsedPatent } from "@/lib/types";
 
 export type ScoreResult = {
   version: string;
+  gate0: Gate0Result; transactability: number; route: RouteType;
   dormancy: number; opportunity: number | null; execution: number | null;
   composite: number | null; passedGate: boolean;
   band: "ROUTE" | "WATCH" | "PASS"; reasons: string[];
 };
 
 export function composeScore(
-  p: ParsedPatent, residual?: DormancyResidual, oppExec?: OppExecEvidence
+  p: ParsedPatent, residual?: DormancyResidual, oppExec?: OppExecEvidence, now?: Date
 ): ScoreResult {
-  const gate = dormancyGate(p, residual);
+  // Gate 0 runs FIRST: is this asset even legally transactable? A non-transactable asset
+  // (full-term expiry, an ungranted application) exits here with a useful route — public-domain
+  // intel is a product, not a dead end — before any dormancy/opportunity/execution meaning
+  // is spent on exclusivity that does not exist.
+  const g0 = runGate0(p, now);
+  const gate = dormancyGate(p, residual, now);
+  const common = { version: SCORING_VERSION, gate0: g0, transactability: g0.transactabilityScore, route: g0.route };
+  if (g0.transactable === "no") {
+    // Non-transactable: exit with a useful route. Dormancy is still reported for context,
+    // but no Opportunity/Execution tokens or meaning are spent on it.
+    return { ...common, dormancy: gate.dormancyScore, opportunity: null, execution: null,
+      composite: null, passedGate: false, band: "PASS", reasons: [...g0.reasons, ...gate.reasons] };
+  }
   if (!gate.passedGate) {
-    // Not dormant -> stop. PASS here means "passed over", per the brief.
-    return { version: SCORING_VERSION, dormancy: gate.dormancyScore, opportunity: null,
-      execution: null, composite: null, passedGate: false, band: "PASS", reasons: gate.reasons };
+    // Transactable, but not dormant -> stop. PASS here means "passed over", per the brief.
+    return { ...common, dormancy: gate.dormancyScore, opportunity: null,
+      execution: null, composite: null, passedGate: false, band: "PASS", reasons: [...g0.reasons, ...gate.reasons] };
   }
   const o = opportunityScore(p, oppExec);
   const e = executionScore(p, oppExec);
@@ -33,6 +48,6 @@ export function composeScore(
     config.weights.execution * e
   );
   const band = composite >= config.bands.route ? "ROUTE" : composite >= config.bands.watch ? "WATCH" : "PASS";
-  return { version: SCORING_VERSION, dormancy: gate.dormancyScore, opportunity: o,
-    execution: e, composite, passedGate: true, band, reasons: gate.reasons };
+  return { ...common, dormancy: gate.dormancyScore, opportunity: o,
+    execution: e, composite, passedGate: true, band, reasons: [...g0.reasons, ...gate.reasons] };
 }

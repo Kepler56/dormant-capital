@@ -20,6 +20,11 @@ import ScoreBadge from "@/components/ScoreBadge";
 import ScoreHero from "@/components/ScoreHero";
 import { SectionLabel } from "@/components/ui/Card";
 import AgentTrace from "@/components/AgentTrace";
+import RunHistory, { type RunHistoryRun } from "@/components/RunHistory";
+import DealJourney from "@/components/DealJourney";
+import BuyerFitPanel from "@/components/BuyerFitPanel";
+import { listOutcomes } from "@/lib/outcomes/queries";
+import { listMandates } from "@/lib/mandates/queries";
 import type { TraceEvent } from "@/lib/agent/state";
 
 export const dynamic = "force-dynamic";
@@ -29,23 +34,50 @@ export default async function PatentDetail({ params }: { params: Promise<{ id: s
   const asset = await get<{ id: number; external_id: string }>("SELECT * FROM asset WHERE id=?", [id]);
   if (!asset) notFound();
 
-  const [facts, judgments, events] = await Promise.all([getFacts(id), getJudgments(id), getEvents(id)]);
+  const [facts, judgments, events, outcomes, mandates] = await Promise.all([
+    getFacts(id), getJudgments(id), getEvents(id), listOutcomes(id), listMandates(),
+  ]);
+  const buyerFitJudgments = judgments.filter((j) => j.dimension === "buyer_fit");
 
-  // Why: a single scan for the latest score_computed event — its payload carries the
-  // deterministic result, the non-authoritative shadow LLM score + its divergence, and the full
-  // agent reasoning trace, all from the exact run that produced lastScore. Deriving all four from
-  // one lookup avoids redundant reverse-scans of the same event list (previously three).
-  const lastEvent = [...events].reverse().find((e) => e.event_type === "score_computed")?.payload as
-    | (ScoreResult & {
-        shadow?: { composite: number; verdict: string; rationale: string } | null;
-        divergence?: { delta: number; agree: boolean } | null;
-        trace?: TraceEvent[];
-      })
-    | undefined;
+  // Why: one reverse + one filter over the event list gives every score_computed run, newest
+  // first — the latest entry doubles as "lastEvent" (its payload carries the deterministic
+  // result, the non-authoritative shadow LLM score + its divergence, and the full agent
+  // reasoning trace) while the full list feeds RunHistory's cross-engine comparison table.
+  // Avoids a second reverse-scan of the same event list to build the run history separately.
+  type ScoreEventPayload = ScoreResult & {
+    shadow?: { composite: number; verdict: string; rationale: string } | null;
+    divergence?: { delta: number; agree: boolean } | null;
+    trace?: TraceEvent[];
+    engine?: { provider: string; model: string } | null;
+  };
+  const scoreEvents = [...events].reverse().filter((e) => e.event_type === "score_computed");
+  const lastEvent = scoreEvents[0]?.payload as ScoreEventPayload | undefined;
   const lastScore = (lastEvent ?? null) as ScoreResult | null;
   const shadow = lastEvent?.shadow ?? null;
   const divergence = lastEvent?.divergence ?? null;
   const trace = lastEvent?.trace ?? null;
+
+  // Runs for the comparison table — tolerant of old payloads that predate engine/route/
+  // transactability/version (they render as "—"/null rather than throwing). Every missing field
+  // maps to null — never a display literal — so components render their own honest empty state
+  // (ScoreBadge shows a dash for a null band instead of fabricating a PASS pill). `version` lets
+  // RunHistory scope its spread row to runs sharing the latest scoring version, so a v1→v2
+  // scoring-engine change is never mistaken for cross-engine disagreement.
+  const runs: RunHistoryRun[] = scoreEvents.map((e) => {
+    const p = (typeof e.payload === "object" && e.payload !== null ? e.payload : {}) as Partial<ScoreEventPayload>;
+    return {
+      at: e.created_at,
+      version: p.version ?? null,
+      engine: p.engine ?? null,
+      route: p.route ?? null,
+      dormancy: p.dormancy ?? null,
+      transactability: p.transactability ?? null,
+      opportunity: p.opportunity ?? null,
+      execution: p.execution ?? null,
+      composite: p.composite ?? null,
+      band: p.band ?? null,
+    };
+  });
 
   const factMap = Object.fromEntries(
     facts.map((f) => [f.key, typeof f.value === "string" ? f.value : JSON.stringify(f.value)])
@@ -132,6 +164,15 @@ export default async function PatentDetail({ params }: { params: Promise<{ id: s
           <AgentTrace events={trace} />
         </section>
       )}
+
+      {/* ── Run history & cross-engine comparison ─────────────────────────── */}
+      <RunHistory runs={runs} />
+
+      {/* ── Buyer fit — score this asset against a mandate's thesis ─────────── */}
+      <BuyerFitPanel assetId={id} mandates={mandates} judgments={buyerFitJudgments} />
+
+      {/* ── Deal journey — the micro-outcome ledger, one row per buyer-journey step ── */}
+      <DealJourney assetId={id} initial={outcomes} />
 
       {/* ── Audit & methodology — collapsed by default, available to anyone ─── */}
       <details className="group rounded-2xl border border-line bg-surface shadow-soft">

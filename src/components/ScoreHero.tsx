@@ -7,11 +7,14 @@
 import Gauge from "./ui/Gauge";
 import type { ScoreResult } from "@/lib/scoring/compose";
 import { verdictFor, SIGNAL_LABELS, TONE_CLASSES } from "@/lib/verdict";
+import RouteBadge from "./RouteBadge";
 
 function MiniRing({ value, color, label, hint }: { value: number | null; color: string; label: string; hint: string }) {
   return (
     <div className="flex flex-col items-center text-center">
-      <Gauge value={value ?? 0} size={92} stroke={9} color={value === null ? "#CBD5E1" : color} />
+      {/* null flows through to Gauge, which renders a dash over an empty arc —
+          "not scored" must never read as "scored zero". */}
+      <Gauge value={value} size={92} stroke={9} color={value === null ? "#CBD5E1" : color} />
       <div className="mt-2 text-sm font-semibold text-ink">{label}</div>
       <div className="mt-0.5 max-w-[150px] text-[11px] leading-snug text-muted">{hint}</div>
     </div>
@@ -22,22 +25,32 @@ export default function ScoreHero({ s }: { s: ScoreResult }) {
   const v = verdictFor(s);
   const tone = TONE_CLASSES[v.tone];
   const cleared = s.passedGate;
+  // Older `score_computed` payloads predate Gate 0 and carry no `route` — render nothing
+  // extra for them (no badge, no transactability ring, no "blended" caption).
+  const hasRoute = s.route != null;
 
   return (
     <div className="overflow-hidden rounded-3xl border border-line bg-surface shadow-soft">
       {/* Verdict band — coloured headline strip */}
       <div className="grid items-center gap-6 p-6 sm:p-8 md:grid-cols-[auto,1fr]">
-        {/* Headline ring */}
-        <div className="flex justify-center md:justify-start">
+        {/* Headline ring — the composite is still shown, but visually secondary once the
+            four split scores below carry the real story. */}
+        <div className="flex flex-col items-center gap-1.5 justify-center md:items-start md:justify-start">
           <Gauge value={v.ringValue} size={150} stroke={13} color={tone.ring} label={v.ringLabel} big />
+          {cleared && s.composite != null && (
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">Blended composite</span>
+          )}
         </div>
 
         {/* Verdict copy */}
         <div>
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${tone.chip}`}>
-            <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone.ring }} />
-            {v.label}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${tone.chip}`}>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone.ring }} />
+              {v.label}
+            </span>
+            {hasRoute && <RouteBadge route={s.route} flags={s.gate0?.flags} />}
+          </div>
           <h2 className="mt-3 max-w-2xl font-display text-xl font-bold leading-snug text-ink sm:text-2xl">
             {v.headline}
           </h2>
@@ -45,10 +58,17 @@ export default function ScoreHero({ s }: { s: ScoreResult }) {
         </div>
       </div>
 
-      {/* Supporting signals — only meaningful once the asset passed the dormancy screen */}
-      {cleared && (
-        <div className="grid grid-cols-3 gap-2 border-t border-line bg-canvas/60 px-6 py-6 sm:px-8">
+      {/* Supporting signals — Dormancy/Transactability/Opportunity/Execution as first-class
+          split scores. Transactability comes from Gate 0 and is available even when the
+          asset didn't clear the dormancy gate; Opportunity/Execution stay null (greyed
+          rings) until scoring actually runs. Falls back to the original 3-ring layout for
+          payloads with no route. */}
+      {(cleared || hasRoute) && (
+        <div className={`grid gap-2 border-t border-line bg-canvas/60 px-6 py-6 sm:px-8 ${hasRoute ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3"}`}>
           <MiniRing value={s.dormancy} color="#1D4ED8" label={SIGNAL_LABELS.dormancy.label} hint={SIGNAL_LABELS.dormancy.hint} />
+          {hasRoute && (
+            <MiniRing value={s.transactability} color="#0EA5E9" label="Transactability" hint="How legally clean and available the exclusivity is" />
+          )}
           <MiniRing value={s.opportunity} color="#3D5AF1" label={SIGNAL_LABELS.opportunity.label} hint={SIGNAL_LABELS.opportunity.hint} />
           <MiniRing value={s.execution} color="#8B5CF6" label={SIGNAL_LABELS.execution.label} hint={SIGNAL_LABELS.execution.hint} />
         </div>

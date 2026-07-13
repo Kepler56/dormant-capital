@@ -80,5 +80,28 @@ export async function ensureSchema(db: Client): Promise<void> {
       UNIQUE(patent_number, event_code, event_date)
     );
     CREATE INDEX IF NOT EXISTS idx_mfe_number ON maintenance_event(patent_number);
+
+    -- outcome: the micro-outcome ledger (brief v2, Upgrade 2). Every step of an
+    -- asset-buyer journey is one timestamped row — fifty signals per deal, not one.
+    -- reason_code is MANDATORY on terminal events (Upgrade 5), enforced in queries.
+    CREATE TABLE IF NOT EXISTS outcome (
+      id INTEGER PRIMARY KEY,
+      asset_id INTEGER NOT NULL REFERENCES asset(id),
+      mandate_id INTEGER,
+      event_type TEXT NOT NULL,
+      reason_code TEXT,
+      note TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_outcome_asset ON outcome(asset_id);
+
+    -- mandate: a buyer's standing thesis (brief Upgrade 3). Paired with an asset it drives
+    -- the per-(mandate, asset) Buyer-Fit Score — the LLM extracts fit evidence, never a number.
+    CREATE TABLE IF NOT EXISTS mandate (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      thesis TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }

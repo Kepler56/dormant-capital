@@ -2,9 +2,11 @@
 // Why: turns evidence (forward citations as a value proxy + LLM commercial-relevance /
 // claim-breadth bands) into an Opportunity sub-score. Deterministic mapping, so two
 // identical evidence sets always yield the same number.
+import { config } from "./config";
 import type { OppExecEvidence, ParsedPatent } from "@/lib/types";
 
-const band = (v: unknown): number => (v === "high" ? 80 : v === "medium" ? 50 : 20);
+const band = (v: unknown): number =>
+  v === "high" ? config.bandPoints.high : v === "medium" ? config.bandPoints.medium : config.bandPoints.low;
 
 export function opportunityScore(p: ParsedPatent, ev?: OppExecEvidence): number {
   // Forward citations: log-ish ladder so a few citations move the needle but volume

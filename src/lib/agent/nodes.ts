@@ -8,6 +8,7 @@ import type { AgentDeps, AgentStateT, TraceEvent, ShadowScore } from "./state";
 import { MAX_RESEARCH_ITERATIONS, MAX_WEB_SEARCHES, computeDivergence } from "./state";
 import { config } from "@/lib/scoring/config";
 import { dormancyGate } from "@/lib/scoring/gate";
+import { runGate0 } from "@/lib/scoring/gate0";
 import { composeScore } from "@/lib/scoring/compose";
 import { DormancyResidual, OppExecEvidence } from "@/lib/types";
 import { buildDormancyPrompt } from "@/lib/prompts/dormancy-residual";
@@ -71,6 +72,18 @@ export async function extractDormancyNode(s: AgentStateT, deps: AgentDeps): Prom
 
 export function gateNode(s: AgentStateT): Partial<AgentStateT> {
   const gate = dormancyGate(s.patent, s.dormancy);
+  // Gate 0 (facts-only transactability) runs alongside the dormancy gate. When Gate 0 says
+  // "no" (e.g. full-term expiry), the asset is not transactable at all, so no LLM tokens
+  // should be spent extracting opportunity/execution evidence for it — reuse the SAME
+  // passedGate:false short-circuit the dormancy gate already drives (straight to compose);
+  // do not add a new conditional edge.
+  const g0 = runGate0(s.patent);
+  if (g0.transactable === "no") {
+    return {
+      gate: { ...gate, passedGate: false },
+      trace: [ev("gate", `Gate 0: ${g0.route} — skipping opportunity/execution analysis`, "info", g0.reasons[0])],
+    };
+  }
   return {
     gate,
     trace: [ev("gate", gate.passedGate ? "Dormancy gate PASSED — proceeding" : "Dormancy gate FAILED — not dormant", gate.passedGate ? "ok" : "info", `score ${gate.dormancyScore}`)],
