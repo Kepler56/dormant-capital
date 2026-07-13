@@ -8,6 +8,11 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import BatchAnalyzePanel from "./BatchAnalyzePanel";
+
+// Selection cap for a batch run — sequential SSE analysis of more than this gets slow and starts
+// pushing into per-provider rate limits (see BatchAnalyzePanel).
+const MAX_BATCH = 10;
 
 // ─── Catalogue types (mirrors /api/index response) ───────────────────────────
 type IndexRow = {
@@ -107,6 +112,11 @@ export default function PatentSearch() {
   // Per-row ingest state: patent number → "loading" | "error" | null.
   const [rowState, setRowState] = useState<Record<string, "loading" | "error" | null>>({});
 
+  // Batch selection: patent numbers checked for a multi-patent analyze run. Persists across
+  // pagination/filter changes so a user can build a batch while browsing several result pages.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchOpen, setBatchOpen] = useState(false);
+
   // ── Catalogue fetch ────────────────────────────────────────────────────────
   const run = useCallback(async (f: Filters, p: number) => {
     setLoading(true);
@@ -182,6 +192,36 @@ export default function PatentSearch() {
       setRowState((s) => ({ ...s, [patentNumber]: "error" }));
       setTimeout(() => setRowState((s) => ({ ...s, [patentNumber]: null })), 5000);
     }
+  }
+
+  // ── Selection (batch analyze) ────────────────────────────────────────────────
+  function toggleRow(num: string, checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        if (next.size >= MAX_BATCH) return prev; // at cap — ignore further checks
+        next.add(num);
+      } else {
+        next.delete(num);
+      }
+      return next;
+    });
+  }
+  function toggleAllOnPage() {
+    const pageNums = rows.map((r) => r.number);
+    const allSelected = pageNums.length > 0 && pageNums.every((n) => selected.has(n));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const n of pageNums) next.delete(n);
+      } else {
+        for (const n of pageNums) {
+          if (next.size >= MAX_BATCH) break;
+          next.add(n);
+        }
+      }
+      return next;
+    });
   }
 
   // ── Event handlers ───────────────────────────────────────────────────────────
@@ -328,6 +368,32 @@ export default function PatentSearch() {
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{error}</div>
       )}
 
+      {/* Batch selection bar — appears once at least one row is checked */}
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3 shadow-soft">
+          <span className="text-sm text-ink-soft">
+            <span className="font-semibold text-ink">{selected.size}</span> selected
+            <span className="ml-2 text-xs text-muted">(max {MAX_BATCH} per batch)</span>
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="text-sm font-medium text-muted underline underline-offset-2 hover:text-ink"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => setBatchOpen(true)}
+              className="rounded-lg bg-action px-4 py-2 text-sm font-semibold text-white transition hover:bg-action-dark"
+            >
+              Analyze selected
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Table card */}
       {(result !== null || loading) && (
         <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-soft">
@@ -350,6 +416,15 @@ export default function PatentSearch() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-line bg-canvas/60 text-left text-xs uppercase tracking-wide text-muted">
+                      <th className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={rows.length > 0 && rows.every((r) => selected.has(r.number))}
+                          onChange={toggleAllOnPage}
+                          aria-label="Select all rows on this page"
+                          className="h-4 w-4 accent-action"
+                        />
+                      </th>
                       <th className="px-4 py-3 font-semibold">Patent</th>
                       <th className="px-4 py-3 font-semibold">Title</th>
                       <th className="px-4 py-3 font-semibold">Assignee</th>
@@ -361,6 +436,16 @@ export default function PatentSearch() {
                     {rows.map((row) => (
                       <tr key={row.number} className="cursor-pointer transition hover:bg-brand-soft/40"
                         onClick={() => handleRowClick(row.number)}>
+                        <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selected.has(row.number)}
+                            onChange={(e) => toggleRow(row.number, e.target.checked)}
+                            disabled={!selected.has(row.number) && selected.size >= MAX_BATCH}
+                            aria-label={`Select ${row.number}`}
+                            className="h-4 w-4 accent-action disabled:cursor-not-allowed disabled:opacity-40"
+                          />
+                        </td>
                         <td className="whitespace-nowrap px-4 py-3.5 font-mono text-xs text-ink-soft">{row.number}</td>
                         <td className="max-w-sm px-4 py-3.5 text-ink"><div className="truncate">{resolvedTitle(row)}</div></td>
                         <td className="max-w-[200px] truncate px-4 py-3.5 text-ink-soft">{resolvedAssignee(row)}</td>
@@ -392,6 +477,10 @@ export default function PatentSearch() {
             </div>
           )}
         </div>
+      )}
+
+      {batchOpen && selected.size > 0 && (
+        <BatchAnalyzePanel numbers={Array.from(selected)} onClose={() => setBatchOpen(false)} />
       )}
     </div>
   );

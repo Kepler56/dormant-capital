@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import AgentTrace from "./AgentTrace";
 import type { TraceEvent } from "@/lib/agent/state";
 import { loadEngines, getActiveEngine, toLLMConfig, type EngineProfile } from "@/lib/client/engines";
+import { streamAnalyze } from "@/lib/client/analyze-stream";
 
 export default function AnalyzeButton({ assetId, num }: { assetId: number; num: string }) {
   const [busy, setBusy] = useState(false);
@@ -32,31 +33,8 @@ export default function AnalyzeButton({ assetId, num }: { assetId: number; num: 
     if (!selected) return; // no engine configured — the hint below tells the user what to do
     const llmConfig = toLLMConfig(selected);
     setBusy(true); setMsg(""); setLive([]);
-    const res = await fetch("/api/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ assetId, num, llmConfig }),
-    });
-    if (!res.body) { setBusy(false); setMsg("No stream"); return; }
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const parts = buf.split("\n\n");
-      buf = parts.pop() ?? "";
-      for (const part of parts) {
-        const line = part.replace(/^data: /, "").trim();
-        if (!line) continue;
-        let frame: { type: string; event?: TraceEvent; message?: string };
-        try { frame = JSON.parse(line); } catch { continue; }
-        if (frame.type === "trace" && frame.event) setLive((p) => [...p, frame.event!]);
-        else if (frame.type === "error") setMsg(frame.message ?? "Failed");
-      }
-    }
+    const result = await streamAnalyze({ assetId, num, llmConfig }, (e) => setLive((p) => [...p, e]));
+    if (!result.ok) setMsg(result.error ?? "Failed");
     setBusy(false);
     router.refresh();
   }
