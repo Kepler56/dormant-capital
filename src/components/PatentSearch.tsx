@@ -21,8 +21,15 @@ type IndexRow = {
 type IndexResult = { total: number; rows: IndexRow[] };
 
 // ─── Filter state ─────────────────────────────────────────────────────────────
-type Filters = { q: string; assignee: string; yearAfter: string; yearBefore: string; dormantOnly: boolean };
-const INITIAL: Filters = { q: "", assignee: "", yearAfter: "", yearBefore: "", dormantOnly: false };
+type Filters = {
+  q: string; assignee: string; yearAfter: string; yearBefore: string;
+  cpc: string; entityStatus: "" | "large" | "small" | "micro"; status: "" | "lapsed" | "maintained";
+  sort: "number" | "year_desc" | "year_asc";
+};
+const INITIAL: Filters = {
+  q: "", assignee: "", yearAfter: "", yearBefore: "",
+  cpc: "", entityStatus: "", status: "", sort: "number",
+};
 
 const PAGE_SIZE = 25; // server-fixed; keep in sync for the "Showing X–Y" display
 
@@ -32,7 +39,10 @@ function buildQS(f: Filters, page: number): string {
   if (f.assignee.trim()) p.set("assignee", f.assignee.trim());
   if (f.yearAfter.trim()) p.set("yearAfter", f.yearAfter.trim());
   if (f.yearBefore.trim()) p.set("yearBefore", f.yearBefore.trim());
-  if (f.dormantOnly) p.set("dormantOnly", "1");
+  if (f.cpc.trim()) p.set("cpc", f.cpc.trim());
+  if (f.entityStatus) p.set("entityStatus", f.entityStatus);
+  if (f.status) p.set("status", f.status);
+  if (f.sort !== "number") p.set("sort", f.sort);
   p.set("page", String(page));
   return p.toString();
 }
@@ -212,14 +222,46 @@ export default function PatentSearch() {
             <input type="number" value={pending.yearBefore} onChange={(e) => setPending((f) => ({ ...f, yearBefore: e.target.value }))}
               placeholder="2005" min={1900} max={2100} className={INPUT} />
           </div>
+          <div className="w-32">
+            <label className="mb-1 block text-xs font-semibold text-muted">CPC class</label>
+            <input type="text" value={pending.cpc} onChange={(e) => setPending((f) => ({ ...f, cpc: e.target.value }))}
+              placeholder="e.g. H01L" className={INPUT} />
+          </div>
         </div>
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink-soft">
-            <input type="checkbox" checked={pending.dormantOnly}
-              onChange={(e) => setPending((f) => ({ ...f, dormantOnly: e.target.checked }))}
-              className="h-4 w-4 rounded border-line text-action focus:ring-action-soft" />
-            Dormant only <span className="text-xs text-muted">(maintenance-fee lapsed)</span>
-          </label>
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <div className="w-44">
+            <label className="mb-1 block text-xs font-semibold text-muted">Status</label>
+            <select value={pending.status}
+              onChange={(e) => setPending((f) => ({ ...f, status: e.target.value as Filters["status"] }))}
+              className={INPUT}>
+              <option value="">Any status</option>
+              <option value="lapsed">Dormant — fee lapsed</option>
+              <option value="maintained">Maintained</option>
+            </select>
+          </div>
+          <div className="w-40">
+            <label className="mb-1 block text-xs font-semibold text-muted">Entity status</label>
+            <select value={pending.entityStatus}
+              onChange={(e) => setPending((f) => ({ ...f, entityStatus: e.target.value as Filters["entityStatus"] }))}
+              className={INPUT}>
+              <option value="">Any</option>
+              <option value="large">Large entity</option>
+              <option value="small">Small entity</option>
+              <option value="micro">Micro entity</option>
+            </select>
+          </div>
+          <div className="w-44">
+            <label className="mb-1 block text-xs font-semibold text-muted">Sort</label>
+            <select value={pending.sort}
+              onChange={(e) => setPending((f) => ({ ...f, sort: e.target.value as Filters["sort"] }))}
+              className={INPUT}>
+              <option value="number">Patent number</option>
+              <option value="year_desc">Newest first</option>
+              <option value="year_asc">Oldest first</option>
+            </select>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
           <div className="flex items-center gap-3">
             <button type="button" onClick={handleReset}
               className="text-sm font-medium text-muted underline underline-offset-2 hover:text-ink">Reset</button>
