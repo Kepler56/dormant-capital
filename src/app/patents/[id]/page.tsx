@@ -21,6 +21,8 @@ import ScoreHero from "@/components/ScoreHero";
 import { SectionLabel } from "@/components/ui/Card";
 import AgentTrace from "@/components/AgentTrace";
 import RunHistory, { type RunHistoryRun } from "@/components/RunHistory";
+import DealJourney from "@/components/DealJourney";
+import { listOutcomes } from "@/lib/outcomes/queries";
 import type { TraceEvent } from "@/lib/agent/state";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +32,7 @@ export default async function PatentDetail({ params }: { params: Promise<{ id: s
   const asset = await get<{ id: number; external_id: string }>("SELECT * FROM asset WHERE id=?", [id]);
   if (!asset) notFound();
 
-  const [facts, judgments, events] = await Promise.all([getFacts(id), getJudgments(id), getEvents(id)]);
+  const [facts, judgments, events, outcomes] = await Promise.all([getFacts(id), getJudgments(id), getEvents(id), listOutcomes(id)]);
 
   // Why: one reverse + one filter over the event list gives every score_computed run, newest
   // first — the latest entry doubles as "lastEvent" (its payload carries the deterministic
@@ -157,6 +159,9 @@ export default async function PatentDetail({ params }: { params: Promise<{ id: s
 
       {/* ── Run history & cross-engine comparison ─────────────────────────── */}
       <RunHistory runs={runs} />
+
+      {/* ── Deal journey — the micro-outcome ledger, one row per buyer-journey step ── */}
+      <DealJourney assetId={id} initial={outcomes} />
 
       {/* ── Audit & methodology — collapsed by default, available to anyone ─── */}
       <details className="group rounded-2xl border border-line bg-surface shadow-soft">
