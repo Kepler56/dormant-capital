@@ -1,33 +1,36 @@
 // components/AnalyzeButton.tsx
 // Why: the ONLY control that spends tokens. It consumes an SSE stream: as the agent works,
 // trace events render live beneath the button, so the user WATCHES the analysis think. Analysis
-// always runs on the user's own BYO model, read from localStorage.llmConfig (set in Settings)
-// and sent with the request. If no model is configured the button points the user to Settings
-// rather than firing a request that would only bounce back a 400.
+// always runs on the user's own BYO model — one of possibly several saved engine profiles
+// (src/lib/client/engines.ts), defaulting to the active one but switchable per run so the same
+// patent can be compared across engines. If no engine is configured the button points the user to
+// Settings rather than firing a request that would only bounce back a 400.
 "use client";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AgentTrace from "./AgentTrace";
 import type { TraceEvent } from "@/lib/agent/state";
-
-function readLLMConfig(): unknown | null {
-  try { const raw = localStorage.getItem("llmConfig"); return raw ? JSON.parse(raw) : null; } catch { return null; }
-}
+import { loadEngines, getActiveEngine, toLLMConfig, type EngineProfile } from "@/lib/client/engines";
 
 export default function AnalyzeButton({ assetId, num }: { assetId: number; num: string }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const [hasByo, setHasByo] = useState(true); // optimistic until we read localStorage
+  const [engines, setEngines] = useState<EngineProfile[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [live, setLive] = useState<TraceEvent[]>([]);
   const router = useRouter();
 
-  useEffect(() => { setHasByo(readLLMConfig() !== null); }, []);
+  useEffect(() => {
+    setEngines(loadEngines());
+    setSelectedId(getActiveEngine()?.id ?? null);
+  }, []);
+
+  const selected = engines.find((e) => e.id === selectedId) ?? null;
 
   async function run() {
-    const llmConfig = readLLMConfig();
-    setHasByo(llmConfig !== null);
-    if (!llmConfig) return; // no model configured — the hint below tells the user what to do
+    if (!selected) return; // no engine configured — the hint below tells the user what to do
+    const llmConfig = toLLMConfig(selected);
     setBusy(true); setMsg(""); setLive([]);
     const res = await fetch("/api/analyze", {
       method: "POST",
@@ -60,9 +63,20 @@ export default function AnalyzeButton({ assetId, num }: { assetId: number; num: 
 
   return (
     <div className="flex w-full flex-col items-end gap-3">
+      {engines.length > 0 && !busy && (
+        <select
+          value={selectedId ?? ""}
+          onChange={(e) => setSelectedId(e.target.value)}
+          className="rounded-xl border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink focus:border-action focus:outline-none focus:ring-2 focus:ring-action-soft"
+        >
+          {engines.map((e) => (
+            <option key={e.id} value={e.id}>{e.label}</option>
+          ))}
+        </select>
+      )}
       <button
         onClick={run}
-        disabled={busy}
+        disabled={busy || !selected}
         className="inline-flex items-center gap-2 rounded-xl bg-action px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-action-dark disabled:cursor-not-allowed disabled:opacity-40"
       >
         {busy ? (
@@ -77,8 +91,8 @@ export default function AnalyzeButton({ assetId, num }: { assetId: number; num: 
         {busy ? "Analyzing…" : "Analyze patent"}
       </button>
       {!busy && (
-        hasByo ? (
-          <span className="text-[11px] text-muted">Using your own API key</span>
+        selected ? (
+          <span className="text-[11px] text-muted">Engine: {selected.label}</span>
         ) : (
           <span className="text-[11px] text-muted">
             <Link href="/settings" className="font-semibold text-action hover:underline">Add your model in Settings</Link> to analyze
