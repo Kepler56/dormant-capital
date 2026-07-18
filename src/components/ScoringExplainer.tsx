@@ -6,7 +6,7 @@
 import { config } from "@/lib/scoring/config";
 
 export default function ScoringExplainer() {
-  const { dormancyFloor, weights, bands } = config;
+  const { dormancyFloor, weights, bands, dormancyPoints: pts, staleLapseYears } = config;
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-600">
@@ -15,14 +15,29 @@ export default function ScoringExplainer() {
       </h3>
 
       <div className="space-y-3">
-        {/* Step 1: the gate — most important concept */}
+        {/* Step 1: the gate — most important concept, and the one users ask about. The point
+            values are spelled out because "the primary signal is a maintenance-fee lapse" does
+            not explain why nearly every analyzed patent scores exactly 83. The arithmetic does. */}
         <div>
-          <span className="font-medium text-ink">1. Dormancy gate (threshold: {dormancyFloor})</span>
+          <span className="font-medium text-ink">1. Dormancy score &amp; gate (threshold: {dormancyFloor})</span>
           <p className="mt-0.5 text-slate-500">
-            Scoring starts with a dormancy check. If the dormancy score is below {dormancyFloor}, the asset is
-            considered <em>not dormant</em> — it returns <strong>PASS</strong> immediately and no further
-            scoring runs. The primary signal is an observable maintenance-fee lapse; the LLM handles
-            only the residual unstructured question (product presence, active litigation).
+            The dormancy score is a sum of a few observable signals, not a model opinion:
+          </p>
+          <ul className="mt-1.5 space-y-1 rounded bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <li><span className="inline-block w-10 font-mono font-semibold tabular-nums">{pts.base}</span> every patent starts here (below the floor — presumed active)</li>
+            <li><span className="inline-block w-10 font-mono font-semibold tabular-nums">+{pts.maintenanceLapsed}</span> owner stopped paying USPTO renewal fees</li>
+            <li><span className="inline-block w-10 font-mono font-semibold tabular-nums">+{pts.staleLapse}</span> that lapse is over {staleLapseYears} years old, unreinstated</li>
+            <li><span className="inline-block w-10 font-mono font-semibold tabular-nums">+{pts.noProduct}</span> research found no product on the market</li>
+            <li><span className="inline-block w-10 font-mono font-semibold tabular-nums">+{pts.noDevelopment}</span> research found no active development</li>
+            <li><span className="inline-block w-10 font-mono font-semibold tabular-nums">{pts.activeLitigation}</span> the patent is being actively litigated</li>
+          </ul>
+          <p className="mt-1.5 text-slate-500">
+            The fee lapse is the only signal that can clear the floor on its own, which is why most
+            dormant candidates land on the same few values — a lapsed patent with a settled lapse
+            scores {pts.base} + {pts.maintenanceLapsed} + {pts.staleLapse} = <strong>{pts.base + pts.maintenanceLapsed + pts.staleLapse}</strong>.
+            That repetition is the scoring working, not a stuck number: patents that match on the
+            measured signals get the same score by design. Below {dormancyFloor}, the asset is
+            treated as <em>not dormant</em> and no further scoring runs.
           </p>
         </div>
 
@@ -37,7 +52,9 @@ export default function ScoringExplainer() {
           </p>
         </div>
 
-        {/* Step 3: routing bands */}
+        {/* Step 3: routing bands. "PASS" is deliberately spelled out here because the word does
+            double duty — a low composite AND an asset that never cleared the gate both land on
+            it. Elsewhere in the UI users see the plain-language verdict instead of the token. */}
         <div>
           <span className="font-medium text-ink">3. Routing bands</span>
           <p className="mt-0.5 text-slate-500">
@@ -46,6 +63,11 @@ export default function ScoringExplainer() {
             ≥{bands.watch} →{" "}
             <span className="font-medium text-amber-700">WATCH</span> (monitor), below →{" "}
             <span className="font-medium text-slate-500">PASS</span> (not prioritized).
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            &ldquo;PASS&rdquo; here means <em>passed over</em>, not &ldquo;passed the test&rdquo;. An asset that never
+            cleared the dormancy gate is also recorded as PASS, which is why the verdict shown
+            elsewhere is written in plain language rather than as this token.
           </p>
         </div>
 

@@ -84,3 +84,50 @@ describe("composeScore", () => {
     expect(r.band).toBe("ROUTE");
   });
 });
+
+// `passedGate: false` has two opposite causes, and the UI has to word them differently. When it
+// could only see the boolean it guessed, and printed "not dormant (dormancy 83 < floor 40)" for
+// a Gate 0 exit whose dormancy was 83 and whose floor was never consulted.
+describe("composeScore stopReason", () => {
+  it("names a Gate 0 exit as not_transactable, keeping the real dormancy score", () => {
+    // Full-term expired: no exclusivity left, so scoring stops BEFORE the dormancy floor matters.
+    const expired = { ...base, maintenanceLapsed: true, anticipatedExpiration: true };
+    const r = composeScore(expired, undefined, undefined, new Date("2026-07-13"));
+    expect(r.passedGate).toBe(false);
+    expect(r.stopReason).toBe("not_transactable");
+    // The dormancy score is real and ABOVE the floor — proving the old wording was false.
+    expect(r.dormancy).toBeGreaterThanOrEqual(40);
+  });
+
+  it("names a dormancy-floor stop as not_dormant", () => {
+    const maintained = { ...base, maintenanceLapsed: false, anticipatedExpiration: false };
+    const r = composeScore(maintained, undefined, undefined, new Date("1995-01-01"));
+    expect(r.passedGate).toBe(false);
+    expect(r.stopReason).toBe("not_dormant");
+    expect(r.dormancy).toBeLessThan(40);
+  });
+
+  it("is null when scoring ran to completion", () => {
+    const lapsed = { ...base, maintenanceLapsed: true, anticipatedExpiration: false };
+    const r = composeScore(lapsed,
+      { product_exists: { value: "no", snippet: "", confidence: "high" },
+        active_development: { value: "no", snippet: "", confidence: "high" },
+        active_litigation: { value: "no", snippet: "", confidence: "high" } },
+      { commercial_relevance: { value: "high", snippet: "", confidence: "medium" },
+        claim_breadth: { value: "medium", snippet: "", confidence: "medium" },
+        ownership_clarity: { value: "high", snippet: "", confidence: "high" } },
+      new Date("1995-01-01"));
+    expect(r.passedGate).toBe(true);
+    expect(r.stopReason).toBeNull();
+  });
+
+  it("carries the dormancy terms on every exit path, since the score exists either way", () => {
+    const now = new Date("2026-07-13");
+    const viaGate0 = composeScore({ ...base, maintenanceLapsed: true, anticipatedExpiration: true }, undefined, undefined, now);
+    const viaFloor = composeScore({ ...base, maintenanceLapsed: false, anticipatedExpiration: false }, undefined, undefined, now);
+    for (const r of [viaGate0, viaFloor]) {
+      expect(r.dormancyTerms.length).toBeGreaterThan(0);
+      expect(r.dormancyTerms.reduce((n, t) => n + t.points, 0)).toBe(r.dormancy);
+    }
+  });
+});

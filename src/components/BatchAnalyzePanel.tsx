@@ -40,7 +40,12 @@ function statusLabel(status: RowStatus): string {
   }
 }
 
-export default function BatchAnalyzePanel({ numbers, onClose }: { numbers: string[]; onClose: () => void }) {
+// `backQS` is the caller's current filter query string (already URI-encoded), forwarded to the
+// detail page as `from` so its "Back to patents" link returns to the filtered list behind this
+// panel rather than a reset catalogue — same contract as a direct row click in PatentSearch.
+export default function BatchAnalyzePanel({
+  numbers, onClose, backQS,
+}: { numbers: string[]; onClose: () => void; backQS?: string }) {
   const [engines, setEngines] = useState<EngineProfile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [rows, setRows] = useState<Row[]>(() => numbers.map((num) => ({ num, status: { kind: "queued" } })));
@@ -182,7 +187,7 @@ export default function BatchAnalyzePanel({ numbers, onClose }: { numbers: strin
                 {statusLabel(row.status)}
               </span>
               {row.status.kind === "done" && (
-                <Link href={`/patents/${row.status.assetId}`} className="shrink-0 text-xs font-semibold text-action hover:underline">
+                <Link href={backQS ? `/patents/${row.status.assetId}?from=${backQS}` : `/patents/${row.status.assetId}`} className="shrink-0 text-xs font-semibold text-action hover:underline">
                   View →
                 </Link>
               )}

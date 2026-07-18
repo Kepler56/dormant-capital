@@ -16,9 +16,40 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { LLMConfig } from "./config";
 
 export type WebSource = { title: string; url: string; snippet: string };
-export type WebEvidence = { sources: WebSource[]; text: string };
 
-const EMPTY: WebEvidence = { sources: [], text: "(no web results found)" };
+// `status` exists because a zero-source result has two completely different meanings that were
+// previously indistinguishable: the web genuinely had nothing to say ("empty"), or the search
+// never actually happened ("failed" — bad model id, tool unsupported for the chosen model,
+// timeout, network, no key). Both used to return the same silent EMPTY, so a provider that
+// cannot ground AT ALL looked exactly like a thorough search that found nothing, and every run
+// logged a reassuring "0 sources / ok". Callers must be able to tell "we looked and found
+// nothing" from "we never looked" — that distinction is the difference between an honest
+// low-confidence verdict and a fabricated one.
+export type WebEvidenceStatus = "ok" | "empty" | "failed";
+export type WebEvidence = {
+  sources: WebSource[];
+  text: string;
+  status: WebEvidenceStatus;
+  /** Human-readable failure cause; only set when status === "failed". */
+  error?: string;
+};
+
+const EMPTY: WebEvidence = { sources: [], text: "(no web results found)", status: "empty" };
+
+// Why a message rather than a thrown error: search stays best-effort and must never crash the
+// analysis path (that contract is unchanged). What changes is that the failure is now RECORDED
+// and travels with the result instead of being swallowed.
+const failed = (error: string): WebEvidence => ({
+  sources: [],
+  text: "(web search failed — evidence unavailable)",
+  status: "failed",
+  error,
+});
+
+function describeError(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  return typeof e === "string" ? e : "unknown error";
+}
 
 // Cap on results kept per single search, and on how many times a provider may call its own
 // search tool inside one request. The agent enforces a separate cap on the NUMBER of searches.
@@ -76,7 +107,7 @@ export function toEvidence(raw: WebSource[], maxResults = MAX_SEARCH_RESULTS): W
   const text = sources
     .map((s, i) => `[${i + 1}] ${s.title}\n${s.url}\n${s.snippet || "(no snippet)"}`)
     .join("\n\n");
-  return { sources, text };
+  return { sources, text, status: "ok" };
 }
 
 // Best-effort recursive harvester for OpenAI/Anthropic messages. Their web-search results and
@@ -159,15 +190,16 @@ async function anthropicSearch(query: string, cfg: LLMConfig, maxResults: number
 }
 
 // Provider-native web search dispatched off the BYO config. Any failure (no key, tool
-// unsupported for the chosen model, timeout, network) degrades to empty so analysis proceeds
-// ungrounded rather than crashing.
+// unsupported for the chosen model, timeout, network) degrades to a `status: "failed"` result so
+// analysis proceeds ungrounded rather than crashing — but the failure is carried on the result
+// and surfaced in the trace, never silently rendered as "found nothing".
 export async function webEvidence(
   query: string,
   cfg: LLMConfig | null | undefined,
   maxResults = MAX_SEARCH_RESULTS,
   timeoutMs = DEFAULT_TIMEOUT_MS
 ): Promise<WebEvidence> {
-  if (!cfg) return EMPTY;
+  if (!cfg) return failed("no LLM engine configured");
   try {
     switch (cfg.provider) {
       case "gemini":
@@ -177,9 +209,12 @@ export async function webEvidence(
       case "anthropic":
         return await anthropicSearch(query, cfg, maxResults, timeoutMs);
       default:
-        return EMPTY;
+        return failed(`unsupported provider "${cfg.provider}"`);
     }
-  } catch {
-    return EMPTY;
+  } catch (e) {
+    // Includes the case that motivated this: a model whose id is valid for chat but which does
+    // not support the provider's grounding tool. That throws here on every single query, which
+    // previously looked like an entirely sourceless web.
+    return failed(`${cfg.provider}/${cfg.model}: ${describeError(e)}`);
   }
 }

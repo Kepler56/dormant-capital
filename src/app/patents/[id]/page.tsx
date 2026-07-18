@@ -8,6 +8,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getFacts, getJudgments, getEvents } from "@/lib/db/queries";
+import { patentsHrefFrom } from "@/lib/patents/filters";
 import { get } from "@/lib/db/connection";
 import type { ScoreResult } from "@/lib/scoring/compose";
 import FactTable from "@/components/FactTable";
@@ -16,7 +17,7 @@ import ScoreBreakdown from "@/components/ScoreBreakdown";
 import ScoringExplainer from "@/components/ScoringExplainer";
 import EventTimeline from "@/components/EventTimeline";
 import AnalyzeButton from "@/components/AnalyzeButton";
-import ScoreBadge from "@/components/ScoreBadge";
+import { verdictFor, TONE_CLASSES } from "@/lib/verdict";
 import ScoreHero from "@/components/ScoreHero";
 import { SectionLabel } from "@/components/ui/Card";
 import AgentTrace from "@/components/AgentTrace";
@@ -29,8 +30,19 @@ import type { TraceEvent } from "@/lib/agent/state";
 
 export const dynamic = "force-dynamic";
 
-export default async function PatentDetail({ params }: { params: Promise<{ id: string }> }) {
+export default async function PatentDetail({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ from?: string | string[] }>;
+}) {
   const id = Number((await params).id);
+  // `from` carries the filter query string of the list page the user arrived from, so the back
+  // link returns to their filtered view rather than a reset catalogue. patentsHrefFrom validates
+  // it against the shared filter whitelist and falls back to a bare "/patents" — arrivals that
+  // carry no filter context (dashboard, batch panel, a pasted URL) simply get the plain link.
+  const backHref = patentsHrefFrom((await searchParams)?.from);
   const asset = await get<{ id: number; external_id: string }>("SELECT * FROM asset WHERE id=?", [id]);
   if (!asset) notFound();
 
@@ -86,7 +98,7 @@ export default async function PatentDetail({ params }: { params: Promise<{ id: s
   return (
     <div className="space-y-6">
       {/* Back link */}
-      <Link href="/patents" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-soft transition hover:text-ink">
+      <Link href={backHref} className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-soft transition hover:text-ink">
         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6" /></svg>
         Back to patents
       </Link>
@@ -96,7 +108,19 @@ export default async function PatentDetail({ params }: { params: Promise<{ id: s
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
             <span className="rounded-lg bg-canvas px-2.5 py-1 font-mono text-sm font-semibold text-ink-soft">{asset.external_id}</span>
-            {lastScore && <ScoreBadge band={lastScore.band} />}
+            {/* Uses verdictFor — the same translation layer ScoreHero uses — rather than the raw
+                band. ScoreBadge is band-only, so on a Gate 0 route it rendered "Not a fit" (band
+                PASS) directly above a hero reading "Public-domain intel", i.e. the page
+                contradicted itself in two adjacent elements. */}
+            {lastScore && (() => {
+              const v = verdictFor(lastScore);
+              return (
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${TONE_CLASSES[v.tone].chip}`}>
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ background: TONE_CLASSES[v.tone].ring }} />
+                  {v.label}
+                </span>
+              );
+            })()}
           </div>
           {factMap.title && <h1 className="mt-2.5 max-w-3xl font-display text-2xl font-bold leading-tight text-ink">{factMap.title}</h1>}
           {factMap.assignee && (

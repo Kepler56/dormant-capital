@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { runGraph, defaultDeps } from "./graph";
 import type { AgentDeps } from "./state";
+import { MAX_RESEARCH_ITERATIONS } from "./state";
 import type { ParsedPatent } from "@/lib/types";
 
 function patent(over: Partial<ParsedPatent> = {}): ParsedPatent {
@@ -17,7 +18,7 @@ function fakeDeps(over: Partial<{ productExists: string; fillable: boolean }> = 
   const productExists = over.productExists ?? "no";
   const fillable = over.fillable ?? false;
   return {
-    search: async (q) => ({ sources: [{ title: "S", url: "http://x/" + q, snippet: "snip" }], text: "[1] S" }),
+    search: async (q) => ({ sources: [{ title: "S", url: "http://x/" + q, snippet: "snip" }], text: "[1] S", status: "ok" as const }),
     chat: (async (_tier: string, prompt: string) => {
       if (prompt.includes("planning research")) return { data: { items: [{ dimension: "dormancy", question: "q", query: "s" }] }, model: "fake" };
       if (prompt.includes("still alive")) return { data: { product_exists: { value: productExists, snippet: "", confidence: "high" }, active_development: { value: "no", snippet: "", confidence: "low" }, active_litigation: { value: "no", snippet: "", confidence: "low" } }, model: "fake" };
@@ -55,9 +56,17 @@ describe("agent graph", () => {
     expect(final.shadow).toBeUndefined(); // shadow only runs when the gate passes
   });
 
-  it("bounds the critique→research loop at 2 iterations", async () => {
+  // This previously asserted `iteration <= 2` while MAX_RESEARCH_ITERATIONS was 1 — true whether
+  // the loop ran or not, so it could never fail and never caught that the loop is unreachable.
+  // Pinned to the exact count instead: research runs EXACTLY once even when the critique asks for
+  // more, because MAX_RESEARCH_ITERATIONS deliberately forbids a second pass. Raise that constant
+  // and this test fails loudly, which is the point.
+  it("runs exactly one research pass even when the critique requests follow-up queries", async () => {
     const { final } = await drain(runGraph({ assetId: 3, num: "US1", patent: patent() }, fakeDeps({ fillable: true })));
-    expect(final.iteration).toBeLessThanOrEqual(2);
+    expect(MAX_RESEARCH_ITERATIONS).toBe(1);
+    expect(final.iteration).toBe(1);
+    expect(final.critique?.fillable).toBe(true); // the critique DID ask to loop...
+    expect(final.searchCount).toBe(1);           // ...and was deliberately not granted a second pass
     expect(final.result).toBeDefined();
   });
 

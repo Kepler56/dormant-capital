@@ -5,7 +5,7 @@ import { upsertAsset, insertFact, getJudgments, getEvents } from "@/lib/db/queri
 
 function fakeDeps(): AgentDeps {
   return {
-    search: async () => ({ sources: [{ title: "S", url: "http://x", snippet: "s" }], text: "[1] S" }),
+    search: async () => ({ sources: [{ title: "S", url: "http://x", snippet: "s" }], text: "[1] S", status: "ok" as const }),
     chat: (async (_t: string, prompt: string) => {
       if (prompt.includes("planning research")) return { data: { items: [{ dimension: "dormancy", question: "q", query: "s" }] }, model: "fake" };
       if (prompt.includes("still alive")) return { data: { product_exists: { value: "no", snippet: "", confidence: "high" }, active_development: { value: "no", snippet: "", confidence: "low" }, active_litigation: { value: "no", snippet: "", confidence: "low" } }, model: "fake" };

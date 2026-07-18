@@ -149,7 +149,10 @@ export default async function Dashboard() {
                 <th className="px-6 py-2.5 font-semibold">Patent</th>
                 <th className="py-2.5 font-semibold">Verdict</th>
                 <th className="py-2.5 text-right font-semibold">Dormancy</th>
-                <th className="py-2.5 text-right font-semibold">Opportunity</th>
+                {/* This column renders `composite`, the blended score — NOT the `opportunity`
+                    sub-score, which is a separate field on the same payload. It was headed
+                    "Opportunity", so the table silently reported one number under another's name. */}
+                <th className="py-2.5 text-right font-semibold">Overall</th>
                 <th className="px-6 py-2.5 text-right font-semibold">Scored</th>
               </tr>
             </thead>

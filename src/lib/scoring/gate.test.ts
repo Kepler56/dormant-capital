@@ -43,3 +43,50 @@ describe("dormancyGate (scoring-v2)", () => {
     expect(dormancyGate(p, residual("unknown", "unknown", "yes"), NOW).dormancyScore).toBe(35);
   });
 });
+
+// The terms are what make the score explainable rather than asserted — the UI renders them as
+// the visible arithmetic behind the number. If they ever stop summing to the score, the page
+// shows a sum that doesn't add up, so that invariant is pinned here.
+describe("dormancyGate score terms", () => {
+  const stale = { ...base, maintenanceLapsed: true, legalEvents: [
+    { date: "2020-01-01", code: "EXP.", description: "Expired for failure to pay" },
+  ]};
+
+  it("emits one term per contributing signal, summing to the score", () => {
+    const r = dormancyGate(stale, undefined, NOW);
+    expect(r.terms.map((t) => t.key)).toEqual(["base", "maintenanceLapsed", "staleLapse"]);
+    expect(r.terms.map((t) => t.points)).toEqual([20, 55, 8]);
+    expect(r.terms.reduce((n, t) => n + t.points, 0)).toBe(r.dormancyScore);
+    expect(r.clamped).toBe(false);
+  });
+
+  it("marks the clamp when the raw sum exceeds 100, so the UI can explain the mismatch", () => {
+    const r = dormancyGate(stale, residual("no", "no", "no"), NOW);
+    expect(r.terms.reduce((n, t) => n + t.points, 0)).toBe(105);
+    expect(r.dormancyScore).toBe(100);
+    expect(r.clamped).toBe(true);
+  });
+
+  it("attributes each term to its origin so the UI can separate record facts from AI judgments", () => {
+    const r = dormancyGate(stale, residual("no", "unknown", "unknown"), NOW);
+    const byKey = Object.fromEntries(r.terms.map((t) => [t.key, t.origin]));
+    expect(byKey.base).toBe("baseline");
+    expect(byKey.maintenanceLapsed).toBe("uspto_record");
+    expect(byKey.staleLapse).toBe("uspto_record");
+    expect(byKey.noProduct).toBe("llm");
+  });
+
+  it("emits a negative term for litigation rather than hiding it in the total", () => {
+    const r = dormancyGate({ ...base, maintenanceLapsed: true }, residual("unknown", "unknown", "yes"), NOW);
+    const lit = r.terms.find((t) => t.key === "activeLitigation")!;
+    expect(lit.points).toBeLessThan(0);
+    expect(r.terms.reduce((n, t) => n + t.points, 0)).toBe(r.dormancyScore);
+  });
+
+  it("a patent with no signals shows only the baseline term", () => {
+    const r = dormancyGate(base, undefined, NOW);
+    expect(r.terms).toHaveLength(1);
+    expect(r.terms[0].key).toBe("base");
+    expect(r.passedGate).toBe(false);
+  });
+});

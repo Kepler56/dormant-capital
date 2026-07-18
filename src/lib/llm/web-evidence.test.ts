@@ -67,4 +67,40 @@ describe("webEvidence", () => {
     expect((await webEvidence("anything", null)).sources).toEqual([]);
     expect((await webEvidence("anything", undefined)).sources).toEqual([]);
   });
+
+  // The distinction these lock down is the whole point of `status`: a run where grounding is
+  // broken must never be reportable as a run where the web simply had nothing to say. Both
+  // cases carry zero sources, so status is the ONLY thing that separates them.
+  it("reports a missing engine as failed, not as an empty web", async () => {
+    const r = await webEvidence("anything", null);
+    expect(r.status).toBe("failed");
+    expect(r.error).toMatch(/no LLM engine configured/);
+  });
+
+  it("reports an unsupported provider as failed and names it", async () => {
+    const r = await webEvidence("q", { provider: "wat", model: "m", apiKey: "k" } as never);
+    expect(r.status).toBe("failed");
+    expect(r.error).toContain("wat");
+  });
+
+  it("reports a provider throw as failed, carrying the cause and the model id", async () => {
+    // An invalid model id is exactly the real-world case that used to look like "0 sources / ok":
+    // the SDK rejects, and the old bare `catch` erased both the failure and the reason.
+    const r = await webEvidence("q", { provider: "gemini", model: "does-not-exist", apiKey: "" } as never, 5, 1);
+    expect(r.status).toBe("failed");
+    expect(r.error).toContain("does-not-exist");
+    expect(r.sources).toEqual([]);
+  });
+
+  it("marks a genuinely sourceless-but-successful parse as empty, not failed", () => {
+    // toEvidence is the shared success path for every provider.
+    expect(parseGroundingResponse(resp({ groundingChunks: [] })).status).toBe("empty");
+  });
+
+  it("marks a parse that yielded sources as ok", () => {
+    const r = parseGroundingResponse(resp({
+      groundingChunks: [{ web: { uri: "https://a.com", title: "A" } }],
+    }));
+    expect(r.status).toBe("ok");
+  });
 });

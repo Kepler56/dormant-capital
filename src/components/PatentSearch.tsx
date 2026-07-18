@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import BatchAnalyzePanel from "./BatchAnalyzePanel";
 import { SECTORS, SECTOR_KEYS } from "@/lib/index/sectors";
+import { type Filters, INITIAL, buildQS, filtersFromParams } from "@/lib/patents/filters";
 
 // Selection cap for a batch run — sequential SSE analysis of more than this gets slow and starts
 // pushing into per-provider rate limits (see BatchAnalyzePanel).
@@ -29,77 +30,12 @@ type IndexRow = {
 type IndexResult = { total: number; rows: IndexRow[] };
 
 // ─── Filter state ─────────────────────────────────────────────────────────────
-type Filters = {
-  q: string; assignee: string; yearAfter: string; yearBefore: string;
-  cpc: string; entityStatus: "" | "large" | "small" | "micro"; status: "" | "lapsed" | "maintained";
-  sector: "" | keyof typeof SECTORS;
-  lapseAge: "" | "recent2" | "recent5" | "stale5";
-  analysis: "" | "analyzed" | "not_analyzed" | "route_license" | "route_revival" | "route_pdi" | "route_tech";
-  sort: "number" | "year_desc" | "year_asc";
-};
-const INITIAL: Filters = {
-  q: "", assignee: "", yearAfter: "", yearBefore: "",
-  cpc: "", entityStatus: "", status: "",
-  sector: "", lapseAge: "", analysis: "",
-  sort: "number",
-};
+// The Filters type, INITIAL, and the buildQS/filtersFromParams round-trip pair live in
+// @/lib/patents/filters — a pure module shared with the patent detail Server Component, which
+// replays the same query string to rebuild its "Back to patents" link. One vocabulary, so a
+// filter added there is preserved by the back link for free.
 
 const PAGE_SIZE = 25; // server-fixed; keep in sync for the "Showing X–Y" display
-
-function buildQS(f: Filters, page: number): string {
-  const p = new URLSearchParams();
-  if (f.q.trim()) p.set("q", f.q.trim());
-  if (f.assignee.trim()) p.set("assignee", f.assignee.trim());
-  if (f.yearAfter.trim()) p.set("yearAfter", f.yearAfter.trim());
-  if (f.yearBefore.trim()) p.set("yearBefore", f.yearBefore.trim());
-  if (f.cpc.trim()) p.set("cpc", f.cpc.trim());
-  if (f.entityStatus) p.set("entityStatus", f.entityStatus);
-  if (f.status) p.set("status", f.status);
-  if (f.sector) p.set("sector", f.sector);
-  if (f.lapseAge) p.set("lapseAge", f.lapseAge);
-  if (f.analysis) p.set("analysis", f.analysis);
-  if (f.sort !== "number") p.set("sort", f.sort);
-  p.set("page", String(page));
-  return p.toString();
-}
-
-const ENTITY_STATUS_VALUES = new Set(["large", "small", "micro"]);
-const STATUS_VALUES = new Set(["lapsed", "maintained"]);
-const SECTOR_VALUES = new Set<string>(SECTOR_KEYS);
-const LAPSE_AGE_VALUES = new Set(["recent2", "recent5", "stale5"]);
-const ANALYSIS_VALUES = new Set([
-  "analyzed", "not_analyzed", "route_license", "route_revival", "route_pdi", "route_tech",
-]);
-const SORT_VALUES = new Set(["number", "year_desc", "year_asc"]);
-
-// Inverse of buildQS: parse a URL's query params back into { filters, page }, falling back to
-// INITIAL/0 for anything missing or invalid (bogus enum values, non-numeric page). One
-// vocabulary shared by fetch and address bar, so the URL is always a faithful round-trip.
-function filtersFromParams(sp: URLSearchParams): { filters: Filters; page: number } {
-  const entityStatus = sp.get("entityStatus") ?? "";
-  const status = sp.get("status") ?? "";
-  const sector = sp.get("sector") ?? "";
-  const lapseAge = sp.get("lapseAge") ?? "";
-  const analysis = sp.get("analysis") ?? "";
-  const sort = sp.get("sort") ?? "number";
-  const filters: Filters = {
-    q: sp.get("q") ?? "",
-    assignee: sp.get("assignee") ?? "",
-    yearAfter: sp.get("yearAfter") ?? "",
-    yearBefore: sp.get("yearBefore") ?? "",
-    cpc: sp.get("cpc") ?? "",
-    entityStatus: ENTITY_STATUS_VALUES.has(entityStatus) ? (entityStatus as Filters["entityStatus"]) : "",
-    status: STATUS_VALUES.has(status) ? (status as Filters["status"]) : "",
-    sector: SECTOR_VALUES.has(sector) ? (sector as Filters["sector"]) : "",
-    lapseAge: LAPSE_AGE_VALUES.has(lapseAge) ? (lapseAge as Filters["lapseAge"]) : "",
-    analysis: ANALYSIS_VALUES.has(analysis) ? (analysis as Filters["analysis"]) : "",
-    sort: SORT_VALUES.has(sort) ? (sort as Filters["sort"]) : "number",
-  };
-  const rawPage = sp.get("page");
-  const parsedPage = rawPage === null ? 0 : Number.parseInt(rawPage, 10);
-  const page = Number.isInteger(parsedPage) && parsedPage >= 0 ? parsedPage : 0;
-  return { filters, page };
-}
 
 const INPUT =
   "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink placeholder-muted focus:border-action focus:outline-none focus:ring-2 focus:ring-action-soft";
@@ -233,7 +169,15 @@ export default function PatentSearch() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const first = data?.results?.[0];
-      if (first?.ok && first?.assetId) router.push(`/patents/${first.assetId}`);
+      // Carry the live filter state along as `from` so the detail page's "Back to patents"
+      // link returns to this exact filtered page. Browser Back already works (it restores the
+      // previous history entry verbatim); this is what makes the in-app link agree with it.
+      // Uses `filters`/`page` — what the visible results actually reflect — not `pending`,
+      // which may hold edits the user typed but never submitted.
+      if (first?.ok && first?.assetId) {
+        const from = encodeURIComponent(buildQS(filters, page));
+        router.push(`/patents/${first.assetId}?from=${from}`);
+      }
       else throw new Error(first?.error ?? "ok=false");
     } catch {
       setRowState((s) => ({ ...s, [patentNumber]: "error" }));
@@ -571,7 +515,11 @@ export default function PatentSearch() {
       )}
 
       {batchOpen && selected.size > 0 && (
-        <BatchAnalyzePanel numbers={Array.from(selected)} onClose={() => setBatchOpen(false)} />
+        <BatchAnalyzePanel
+          numbers={Array.from(selected)}
+          onClose={() => setBatchOpen(false)}
+          backQS={encodeURIComponent(buildQS(filters, page))}
+        />
       )}
     </div>
   );

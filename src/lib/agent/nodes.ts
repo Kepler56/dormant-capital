@@ -40,9 +40,25 @@ export async function researchNode(s: AgentStateT, deps: AgentDeps): Promise<Par
   // Run the pass's searches in PARALLEL — wall-clock is the slowest single search, not the sum.
   const results = await Promise.all(queries.map((q) => deps.search(q).then((r) => ({ q, r }))));
   const sources: WebSource[] = [];
+  let failures = 0;
   for (const { q, r } of results) {
     sources.push(...r.sources);
-    trace.push(ev("research", `Searched: ${q}`, "ok", `${r.sources.length} sources`));
+    // A failed search is reported as a WARNING naming the cause, not as a successful "0 sources".
+    // Reading a run's trace must make it obvious whether the evidence base is thin because the
+    // web is quiet or because grounding never ran.
+    if (r.status === "failed") {
+      failures++;
+      trace.push(ev("research", `Search FAILED: ${q}`, "warn", r.error ?? "unknown error"));
+    } else {
+      trace.push(ev("research", `Searched: ${q}`, "ok", `${r.sources.length} sources`));
+    }
+  }
+  // Every query failing means this engine cannot ground at all — the single most important thing
+  // to know about the run, since every downstream judgment is then model prior with no evidence
+  // behind it. Called out once, explicitly, rather than left for the reader to infer from N warns.
+  if (failures > 0 && failures === queries.length) {
+    trace.push(ev("research", `Web search unavailable for this engine — all ${failures} search(es) failed`, "warn",
+      "Findings below are ungrounded (model prior only). Check the engine's model id supports web search."));
   }
   if (planned.length > queries.length) {
     trace.push(ev("research", `Search budget reached (max ${MAX_WEB_SEARCHES}) — skipped ${planned.length - queries.length} query(ies)`, "info"));
@@ -91,19 +107,46 @@ export function gateNode(s: AgentStateT): Partial<AgentStateT> {
 }
 
 export async function extractOppExecNode(s: AgentStateT, deps: AgentDeps): Promise<Partial<AgentStateT>> {
+  // s.sourceText is the same numbered evidence block the dormancy extractor saw. Passing it here
+  // is what makes opportunity/execution grounded: the research plan spends part of its query
+  // budget on exactly these two dimensions, and until now those results reached no prompt at all.
+  const grounded = s.sourceText.length > 0;
   const { data, model } = await deps.chat("deep",
-    buildOppExecPrompt({ title: s.patent.title ?? s.num, abstract: s.patent.abstract ?? "", assignee: s.patent.assignee ?? "unknown", cpc: s.patent.cpcClasses.join(", ") }),
+    buildOppExecPrompt({
+      title: s.patent.title ?? s.num,
+      abstract: s.patent.abstract ?? "",
+      assignee: s.patent.assignee ?? "unknown",
+      cpc: s.patent.cpcClasses.join(", "),
+      webEvidence: s.sourceText,
+    }),
     OppExecEvidence);
-  return { oppExec: data, oppExecModel: model, trace: [ev("extract_oppexec", "Extracted opportunity & execution evidence", "ok")] };
+  return {
+    oppExec: data,
+    oppExecModel: model,
+    trace: [ev("extract_oppexec",
+      grounded ? "Extracted opportunity & execution evidence" : "Extracted opportunity & execution evidence (ungrounded)",
+      grounded ? "ok" : "warn",
+      grounded ? `${s.sources.length} source(s)` : "no web evidence — bands are model prior only")],
+  };
 }
 
 export async function critiqueNode(s: AgentStateT, deps: AgentDeps): Promise<Partial<AgentStateT>> {
   const evidenceJson = JSON.stringify({ dormancy: s.dormancy, oppExec: s.oppExec });
   const { data } = await deps.chat("extract", buildCritiquePrompt({ evidenceJson, sources: s.sourceText }), CRITIQUE_SCHEMA);
   const willLoop = data.fillable && data.queries.length > 0 && s.iteration < MAX_RESEARCH_ITERATIONS;
+  // MAX_RESEARCH_ITERATIONS is 1 by design (a second pass roughly doubles wall-clock), so
+  // `willLoop` is currently always false and the follow-up queries are never run. The gaps are
+  // still worth the call: they are the honest list of what this analysis could NOT establish, so
+  // they are named in the trace rather than reduced to a count. A reader can then see that e.g.
+  // "no evidence found about current licensing" is a known hole, not an unasked question.
   return {
     critique: data,
-    trace: [ev("critique", data.gaps.length ? `Found ${data.gaps.length} gap(s)` : "No gaps — evidence is solid", data.gaps.length ? "warn" : "ok", willLoop ? "re-searching" : undefined)],
+    trace: [ev(
+      "critique",
+      data.gaps.length ? `Could not establish ${data.gaps.length} thing(s)` : "No gaps — evidence is solid",
+      data.gaps.length ? "warn" : "ok",
+      data.gaps.length ? data.gaps.join(" · ") : undefined,
+    )],
   };
 }
 

@@ -6,7 +6,7 @@
 import { Annotation } from "@langchain/langgraph";
 import type { ZodSchema } from "zod";
 import type { Tier } from "@/lib/llm/model";
-import type { WebSource } from "@/lib/llm/web-evidence";
+import type { WebSource, WebEvidence } from "@/lib/llm/web-evidence";
 import type { DormancyResidual, OppExecEvidence, ParsedPatent } from "@/lib/types";
 import type { ScoreResult } from "@/lib/scoring/compose";
 import type { GateResult } from "@/lib/scoring/gate";
@@ -34,7 +34,9 @@ export type Critique = { gaps: string[]; fillable: boolean; queries: string[] };
 
 export type AgentDeps = {
   chat: <T>(tier: Tier, prompt: string, schema: ZodSchema<T>) => Promise<{ data: T; model: string }>;
-  search: (query: string) => Promise<{ sources: WebSource[]; text: string }>;
+  // Returns the full WebEvidence — `status`/`error` included — so researchNode can report a
+  // failed search as a failure instead of as an empty result. See web-evidence.ts.
+  search: (query: string) => Promise<WebEvidence>;
 };
 
 export function computeDivergence(deterministic: number | null, shadow: number, threshold: number): Divergence {
